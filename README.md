@@ -3,6 +3,8 @@
 > 本仓库是这台机器上 **Primo Ramdisk（Z 盘）** 的稳定化方案：开机自启、镜像持久化、
 > 掉盘自愈、安全备份、出错告警。给本人和以后的 AI 维护者查阅。
 > 最后更新：2026-06-15。
+>
+> 🚀 **系统重装 / 换电脑**：直接看 [`DEPLOY.md`](DEPLOY.md)（含 Primo 手动建盘 + `deploy.ps1` 一键部署）。
 
 ---
 
@@ -198,10 +200,13 @@ Z:\
 
 ```
 RamdiskGuardian/
-├─ README.md                      本文件
-├─ zguardian.ps1                  守护脚本（备份 + 掉盘自愈 + 健康告警）
-├─ sync_code.bat                  入口（被 VBS 调用，转调 zguardian.ps1）
-├─ run_hidden.vbs                 隐藏窗口启动器（被计划任务调用）
+├─ README.md                      本文件（原理与运维）
+├─ DEPLOY.md                      快速部署指南（系统重装 / 换电脑）
+├─ deploy.ps1                     一键部署（关快速启动/建目录/注册任务/Chrome junction，幂等）
+├─ zguardian.ps1                  守护脚本（备份 + 掉盘自愈 + 健康告警；路径可移植）
+├─ sync_code.bat                  入口（被 VBS 调用，%~dp0 转调 zguardian.ps1）
+├─ run_hidden.vbs                 隐藏窗口启动器（被计划任务调用，自定位）
+├─ ramdrive.txt                   可选：非 Z 盘符时由 deploy.ps1 写入
 ├─ .gitignore                     忽略 logs/ 等运行时产物
 ├─ archive/
 │   └─ sync_code.bat.bak_20260614 原始备份脚本（含危险 /MIR，仅留档）
