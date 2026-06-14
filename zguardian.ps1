@@ -3,28 +3,27 @@
 #  Run by Task "RAMDisk_Code_Backup" at logon + every 15 min,
 #  in the interactive session (highest privilege).
 #
-#  PORTABLE PATHS (so it survives reinstall / new PC / moved repo):
-#    - repo root       = the folder this script sits in ($PSScriptRoot)
-#    - data drive      = the drive the repo is on (e.g. E:)
-#    - backup folder   = <dataDrive>\Z_Drive_Backup
-#    - RAM disk letter = 'Z' by default; override by putting a single
-#                        letter (e.g. R) in  <repo>\ramdrive.txt
+#  PORTABLE PATHS (survives reinstall / new PC / moved repo):
+#    repo root = $PSScriptRoot ; data drive = drive of the repo ;
+#    backup = <dataDrive>\Z_Drive_Backup ; RAM letter = 'Z' or repo\ramdrive.txt
 #
-#  Driven by a hidden marker  <Z>:\.ramdisk_ready :
-#    marker MISSING  -> fresh / just-dropped disk: rebuild skeleton +
-#        cache dirs, RESTORE projects/docs/others from backup, write marker.
-#    marker PRESENT  -> already initialised: ensure cache dirs, then
-#        BACK UP projects/docs/others.
+#  WHEN DOES IT PULL FROM BACKUP (heal/restore)?  -> only when needed:
+#    * marker  <Z>\.ramdisk_ready  MISSING  = disk is fresh / just dropped
+#      & recreated mid-session  -> restore.
+#    * FIRST run after a (re)boot = disk was just loaded from the Primo
+#      image, which may be STALE vs the backup -> heal.
+#    In both cases it pulls only files where the BACKUP is NEWER than the
+#    disk (robocopy /E /XO), so a stale image is corrected automatically.
+#    On every OTHER run it does NOT pull, so files you delete on Z are
+#    respected (not resurrected).
 #
-#  BACKUP is APPEND-ONLY & NEWER-WINS (robocopy /E /XO, no /PURGE):
-#    never deletes from the backup and never overwrites a newer backup
-#    file with an older disk file -> a drop or a stale post-crash image
-#    can NEVER shrink/downgrade the backup. (Deleted files linger in the
-#    backup by design - the deliberate trade for "never lose data".)
+#  BACKUP (every run, append-only & newer-wins, robocopy /E /XO, no /PURGE):
+#    never deletes from the backup, never overwrites a newer backup file
+#    with an older disk file. A drop / stale image can NEVER shrink or
+#    downgrade the backup. (Deleted files linger in the backup by design.)
 #
-#  Health: logs\STATUS.txt (OK/WARN/ERROR) + logs\guardian.log +
-#          logs\alerts.log + a one-shot msg.exe popup on WARN/ERROR.
-#  ASCII-only on purpose (cmd/PowerShell code-page safe).
+#  Health: logs\STATUS.txt (OK/WARN/ERROR) + guardian.log + alerts.log
+#          + one-shot msg.exe popup on WARN/ERROR.  ASCII-only on purpose.
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -37,6 +36,7 @@ $log    = Join-Path $logDir 'guardian.log'
 $statusF= Join-Path $logDir 'STATUS.txt'
 $alertF = Join-Path $logDir 'alerts.log'
 $lastF  = Join-Path $logDir '.lasthealth'
+$bootF  = Join-Path $logDir '.lastboot'
 
 $dataDrive  = Split-Path $root -Qualifier            # e.g. 'E:'
 $backupRoot = Join-Path "$dataDrive\" 'Z_Drive_Backup'
@@ -60,9 +60,21 @@ function Set-Health([string]$health,[string]$detail){
     Set-Content -Path $lastF -Value $health -Encoding utf8
     Log "health $health - $detail"
 }
+function NewestUtc($p){
+    if (-not (Test-Path $p)) { return [datetime]::MinValue }
+    $f = Get-ChildItem $p -Recurse -File -Force -EA SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if ($f) { return $f.LastWriteTimeUtc } else { return [datetime]::MinValue }
+}
 
 if ((Test-Path $log) -and ((Get-Item $log).Length -gt 1MB)) { Move-Item $log "$log.1" -Force }
 Log "--- guardian run (root=$root data=$dataDrive ram=$Z) ---"
+
+# detect "first run since this boot" (the boot-loaded image may be stale)
+$bootTicks = "0"
+try { $bootTicks = "$(((Get-CimInstance Win32_OperatingSystem).LastBootUpTime).ToUniversalTime().Ticks)" } catch {}
+$prevBoot  = (Get-Content $bootF -EA SilentlyContinue | Select-Object -First 1)
+$firstRunThisBoot = ($bootTicks -ne "0") -and ($bootTicks -ne "$prevBoot")
+if ($bootTicks -ne "0") { Set-Content -Path $bootF -Value $bootTicks -Encoding ascii }
 
 # wait up to 150s for the RAM disk to appear (Primo loads its image at boot)
 $deadline = (Get-Date).AddSeconds(150)
@@ -76,31 +88,37 @@ if (-not (Test-Path "$Z\")) {
 $dirs = @("$Z\projects","$Z\docs","$Z\others","$Z\Caches","$Z\Caches\ChromeCache","$Z\Caches\360zip_temp","$Z\TEMP")
 foreach ($d in $dirs) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null; Log "mkdir $d" } }
 
-if (-not (Test-Path $marker)) {
-    Log '=== FRESH/empty disk -> RESTORE from backup ==='
-    foreach ($n in $names) {
-        $src = Join-Path $backupRoot $n; $dst = "$Z\$n"
-        $bk = (Test-Path $src) -and ((@(Get-ChildItem $src -Recurse -File -Force)).Count -gt 0)
-        if ($bk) { Log "restore $src -> $dst"; robocopy $src $dst /E /R:0 /W:0 /MT:16 *> $null }
-        else     { Log "backup empty, nothing to restore for $dst" }
+$markerMissing = -not (Test-Path $marker)
+$doHeal = $markerMissing -or $firstRunThisBoot   # pull newer-from-backup only in these cases
+if ($doHeal) { Log "HEAL pass (markerMissing=$markerMissing firstRunThisBoot=$firstRunThisBoot)" }
+
+foreach ($n in $names) {
+    $src = "$Z\$n"; $dst = Join-Path $backupRoot $n   # NB: never name a var $z (collides with $Z - PS is case-insensitive)
+    # 1) HEAL/RESTORE: pull files where the backup is NEWER than the disk
+    if ($doHeal) {
+        $sNew = NewestUtc $src; $dNew = NewestUtc $dst
+        if ($dNew -gt $sNew) {
+            Log "[HEAL] $dst -> $src (backup newer)"
+            robocopy $dst $src /E /XO /R:0 /W:0 /MT:16 *> $null
+        }
     }
-    New-Item -ItemType File -Path $marker -Force | Out-Null
-    try { (Get-Item $marker -Force).Attributes = 'Hidden' } catch {}
-    Log '=== restore done, marker written ==='
-}
-else {
-    Log '=== normal run -> BACK UP to backup (append-only /E /XO) ==='
-    foreach ($n in $names) {
-        $src = "$Z\$n"; $dst = Join-Path $backupRoot $n
-        $hasFiles = (@(Get-ChildItem $src -Recurse -File -Force)).Count -gt 0
-        if (-not $hasFiles) { Log "[SKIP] $src has no files - backup preserved"; continue }
+    # 2) BACKUP: push live disk content -> backup (append-only, never downgrade/delete)
+    if ((@(Get-ChildItem $src -Recurse -File -Force)).Count -gt 0) {
         if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
         $rc = @($src, $dst, '/E', '/XO', '/R:0', '/W:0', '/MT:16')
         if ($n -eq 'projects') { $rc += @('/XD','target','venv','.venv','.idea','target-eclipse','bin','build') }
         Log "[SYNC] $src -> $dst"
         robocopy @rc *> $null
+    } else {
+        Log "[SKIP backup] $src has no files - backup preserved"
     }
-    Log '=== backup done ==='
+}
+
+# (re)assert the ready marker
+if ($markerMissing) {
+    New-Item -ItemType File -Path $marker -Force | Out-Null
+    try { (Get-Item $marker -Force).Attributes = 'Hidden' } catch {}
+    Log 'marker written'
 }
 
 # health check: low space?
