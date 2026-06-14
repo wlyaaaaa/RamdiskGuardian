@@ -122,7 +122,7 @@ Z:\
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
-| ① Chrome HTTP 缓存 | ✅ 已配置 | junction `…\User Data\Default\Cache → Z:\Caches\ChromeCache`，已重启 Chrome 接好；HTTP 缓存写入较懒，正常浏览后会填充。**注意**：Chrome 的 `Code Cache`、`GPUCache` 仍在 C 盘没搬，若想把 Chrome 缓存"完整"搬到 Z，见 §8 增强项。 |
+| ① Chrome HTTP 缓存 | ◑ 已配置/收益有限 | junction `…\Default\Cache → Z:\Caches\ChromeCache` 有效且可写、Chrome 已重启接好。但**实测 Chrome 149 这次没往该目录写**（HTTP 响应多走内存缓存）；真正在频繁读写的 `Default\Code Cache` 仍在 **C 盘**。要让内存盘真正给 Chrome 提速，建议照 §8 把 `Code Cache`、`GPUCache` 也搬到 Z（那才是热点）。 |
 | ② 360 压缩缓存 | ✅ 正常 | `360zip_config.ini` 的 `ExtractTmpDir = Z:\Caches\360zip_temp`，目录已就绪。 |
 | ③ Java/Python | ◑ 按既定取舍 | 项目放 `Z:\projects`（快 I/O）；依赖缓存（.m2/pip）按你的选择**留在 C 盘**（持久，掉盘不用重下）。完整加速规划见 §7。 |
 | ④ 重要文件目录 | ✅ 正常 | `Z:\others`、`Z:\docs`。 |
