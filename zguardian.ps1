@@ -9,8 +9,16 @@
 #        from E:\Z_Drive_Backup, then write the marker.   (auto-recover)
 #    marker PRESENT  -> disk already initialised this boot:
 #        ensure cache dirs, then BACK UP projects/docs/others to
-#        E:\Z_Drive_Backup (mirror, but NEVER mirror a fileless source,
-#        so a drop can't wipe the backup; honours deliberate deletes).
+#        E:\Z_Drive_Backup.
+#
+#  BACKUP is intentionally APPEND-ONLY & NEWER-WINS (robocopy /E /XO):
+#    - never deletes from the backup (no /PURGE)  -> a drop or a stale
+#      image-restore can NEVER shrink/wipe the backup;
+#    - never overwrites a NEWER backup file with an OLDER disk file
+#      (/XO) -> a stale post-crash image can't downgrade the backup.
+#    Cost: files you delete on Z linger in E:\Z_Drive_Backup (safe;
+#    clean it manually if you want). This is the deliberate trade for
+#    "never lose data".
 #
 #  Health surfacing (so you always know when something is wrong):
 #    - logs\STATUS.txt   : one line, latest health (OK / WARN / ERROR)
@@ -40,16 +48,16 @@ function Set-Health([string]$health,[string]$detail){
         try { & "$env:WINDIR\System32\msg.exe" * "/TIME:60" "RamDisk(Z:) $health - $detail" } catch {}
     }
     Set-Content -Path $lastF -Value $health -Encoding utf8
+    Log "health $health - $detail"
 }
 
 if ((Test-Path $log) -and ((Get-Item $log).Length -gt 1MB)) { Move-Item $log "$log.1" -Force }
 Log '--- guardian run ---'
 
-# wait up to 60s for Z: to appear
-$deadline = (Get-Date).AddSeconds(60)
+# wait up to 150s for Z: to appear (Primo loads the 32GB image at boot; give it room)
+$deadline = (Get-Date).AddSeconds(150)
 while (-not (Test-Path 'Z:\') -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
 if (-not (Test-Path 'Z:\')) {
-    Log '[ABORT] Z: not present after 60s - backup untouched'
     Set-Health 'ERROR' 'disk Z: is MISSING - check Primo / reboot'
     exit 0
 }
@@ -72,13 +80,13 @@ if (-not (Test-Path $marker)) {
     Log '=== restore done, marker written ==='
 }
 else {
-    Log '=== normal run -> BACK UP Z: to E: ==='
+    Log '=== normal run -> BACK UP Z: to E: (append-only /E /XO) ==='
     foreach ($n in $names) {
         $src = "Z:\$n"; $dst = Join-Path $backupRoot $n
         $hasFiles = (@(Get-ChildItem $src -Recurse -File -Force)).Count -gt 0
         if (-not $hasFiles) { Log "[SKIP] $src has no files - backup preserved"; continue }
         if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
-        $rc = @($src, $dst, '/MIR', '/R:0', '/W:0', '/MT:16')
+        $rc = @($src, $dst, '/E', '/XO', '/R:0', '/W:0', '/MT:16')
         if ($n -eq 'projects') { $rc += @('/XD','target','venv','.venv','.idea','target-eclipse','bin','build') }
         Log "[SYNC] $src -> $dst"
         robocopy @rc *> $null
@@ -87,7 +95,11 @@ else {
 }
 
 # health check: low space?
-$free = [math]::Round((Get-Volume -DriveLetter Z).SizeRemaining/1GB, 1)
-if ($free -lt 2) { Set-Health 'WARN' ("low space: {0} GB free on Z:" -f $free) }
-else             { Set-Health 'OK'   ("Z: present, {0} GB free" -f $free) }
-Log "health OK, free=${free}GB"
+$vol = Get-Volume -DriveLetter Z -ErrorAction SilentlyContinue
+if ($vol) {
+    $free = [math]::Round($vol.SizeRemaining/1GB, 1)
+    if ($free -lt 2) { Set-Health 'WARN' ("low space: {0} GB free on Z:" -f $free) }
+    else             { Set-Health 'OK'   ("Z: present, {0} GB free" -f $free) }
+} else {
+    Set-Health 'WARN' 'Z: present but volume query failed'
+}
