@@ -1,0 +1,6 @@
+# runtime logs / state - not source
+logs/
+*.log
+*.log.1
+.lasthealth
+STATUS.txt

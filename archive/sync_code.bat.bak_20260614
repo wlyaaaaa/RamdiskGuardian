@@ -1,0 +1,21 @@
+@echo off
+:: =====================================================================
+:: Z盘全资产特区 - 多通道高频强力同步守护进程 (终极版)
+:: =====================================================================
+
+:: 设置编码为 UTF-8 避免路径中含有中文时出现乱码
+chcp 65001 >nul
+
+:: 【通道 1】：核心手写源码备份 (强力过滤编译垃圾)
+if not exist "E:\Z_Drive_Backup\projects" md "E:\Z_Drive_Backup\projects"
+robocopy "Z:\projects" "E:\Z_Drive_Backup\projects" /MIR /R:0 /W:0 /MT:16 /XD target venv .venv .idea target-eclipse bin build
+
+:: 【通道 2】：个人文档与学习笔记备份 (纯文本为主，秒级增量)
+if not exist "E:\Z_Drive_Backup\docs" md "E:\Z_Drive_Backup\docs"
+robocopy "Z:\docs" "E:\Z_Drive_Backup\docs" /MIR /R:0 /W:0 /MT:16
+
+:: 【通道 3】：其他高价值个人杂项资产备份
+if not exist "E:\Z_Drive_Backup\others" md "E:\Z_Drive_Backup\others"
+robocopy "Z:\others" "E:\Z_Drive_Backup\others" /MIR /R:0 /W:0 /MT:16
+
+exit
