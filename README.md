@@ -253,5 +253,5 @@ Get-ScheduledTask RAMDisk_Code_Backup | % { $_.Triggers }
 - **2026-06-14**：发现并修复掉盘问题；重写安全备份脚本；加开机自愈+健康告警；
   关闭 Windows 快速启动；盘从 20GB→32GB、加镜像持久化（非临时盘）。
 - **已知丢失**：本次接手前，`Z:\projects/docs/others` 原始数据已丢失——旧 `/MIR` 脚本
-  在更早一次掉盘时把 `E:\Z_Drive_Backup` 清空了，本地无其他副本。若那些是 git工程，
+  在更早一次掉盘时把 `E:\Z_Drive_Backup` 清空了，本地无其他副本。若那些是 git 工程，
   可从 GitHub 远端找回。
