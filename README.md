@@ -204,7 +204,9 @@ Z:\
 ```
 RamdiskGuardian/
 ├─ README.md                      本文件（原理与运维）
+├─ README.pdf                     本文件导出的 PDF（自动同步到 GitHub）
 ├─ DEPLOY.md                      快速部署指南（系统重装 / 换电脑）
+├─ DEPLOY.pdf                     快速部署指南的 PDF（自动同步到 GitHub）
 ├─ deploy.ps1                     一键部署（关快速启动/建目录/注册任务/Chrome junction，幂等）
 ├─ zguardian.ps1                  守护脚本（备份 + 掉盘自愈 + 健康告警；路径可移植）
 ├─ sync_code.bat                  入口（被 VBS 调用，%~dp0 转调 zguardian.ps1）
@@ -245,8 +247,11 @@ Get-ScheduledTask RAMDisk_Code_Backup | % { $_.Triggers }
 
 ## 11. 变更历史 & 已知数据丢失
 
+- **2026-06-15**：
+  - 升级 `build_docs_pdf.py` 支持指定工作目录与自动推送到 GitHub，生成并同步了本项目的 PDF 文档。
+  - 优化 `deploy.ps1` 中的 Chrome 缓存 Junction 重建逻辑，使其在内存盘符发生变更后重新运行部署时，能自动检测差异并安全更新 Junction 指向。
 - **2026-06-14**：发现并修复掉盘问题；重写安全备份脚本；加开机自愈+健康告警；
   关闭 Windows 快速启动；盘从 20GB→32GB、加镜像持久化（非临时盘）。
 - **已知丢失**：本次接手前，`Z:\projects/docs/others` 原始数据已丢失——旧 `/MIR` 脚本
-  在更早一次掉盘时把 `E:\Z_Drive_Backup` 清空了，本地无其他副本。若那些是 git 工程，
+  在更早一次掉盘时把 `E:\Z_Drive_Backup` 清空了，本地无其他副本。若那些是 git工程，
   可从 GitHub 远端找回。

@@ -82,8 +82,22 @@ if (Test-Path $prof) {
         New-Item -ItemType Directory -Force $target | Out-Null
         $cache = Join-Path $prof 'Cache'
         $isLink = (Test-Path $cache) -and ((Get-Item $cache -Force).Attributes -match 'ReparsePoint')
-        if ((Test-Path $cache) -and -not $isLink) { cmd /c ('rmdir /s /q "' + $cache + '"') 2>$null }
-        if (-not (Test-Path $cache)) { cmd /c ('mklink /J "' + $cache + '" "' + $target + '"') | Out-Null }
+        
+        $needsRecreate = $false
+        if ($isLink) {
+            $currentTarget = (Get-Item $cache -Force).Target
+            if ($currentTarget -ne $target) {
+                $needsRecreate = $true
+                Say "Junction target changed from '$currentTarget' to '$target'. Recreating..."
+            }
+        }
+        
+        if (((Test-Path $cache) -and -not $isLink) -or $needsRecreate) { 
+            cmd /c ('rmdir /s /q "' + $cache + '"') 2>$null 
+        }
+        if (-not (Test-Path $cache) -or $needsRecreate) { 
+            cmd /c ('mklink /J "' + $cache + '" "' + $target + '"') | Out-Null 
+        }
         Say "Chrome cache junction -> $target"
     }
 }
