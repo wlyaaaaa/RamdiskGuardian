@@ -72,33 +72,44 @@ if (-not (Test-Path "$Z\")) {
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'zguardian.ps1')
 Say 'guardian ran (Z: skeleton built / data restored if any)'
 
-# 6) Chrome cache junction -> <Z>\Caches\ChromeCache  (only if Chrome profile exists)
+# 6) Chrome Cache, Code Cache, and GPUCache junctions -> <Z>\Caches  (only if Chrome profile exists)
 $prof = "C:\Users\$User\AppData\Local\Google\Chrome\User Data\Default"
 if (Test-Path $prof) {
     if (Get-Process chrome -ErrorAction SilentlyContinue) {
-        Warn 'Chrome is running - skipping cache junction. Close Chrome and re-run, or do it manually (see DEPLOY.md).'
+        Warn 'Chrome is running - skipping cache junctions. Close Chrome and re-run, or do it manually (see DEPLOY.md).'
     } else {
-        $target = "$Z\Caches\ChromeCache"
-        New-Item -ItemType Directory -Force $target | Out-Null
-        $cache = Join-Path $prof 'Cache'
-        $isLink = (Test-Path $cache) -and ((Get-Item $cache -Force).Attributes -match 'ReparsePoint')
+        $chromeDirs = @(
+            @{ FolderName = 'Cache'; TargetName = 'ChromeCache' },
+            @{ FolderName = 'Code Cache'; TargetName = 'ChromeCodeCache' },
+            @{ FolderName = 'GPUCache'; TargetName = 'ChromeGPUCache' }
+        )
         
-        $needsRecreate = $false
-        if ($isLink) {
-            $currentTarget = (Get-Item $cache -Force).Target
-            if ($currentTarget -ne $target) {
-                $needsRecreate = $true
-                Say "Junction target changed from '$currentTarget' to '$target'. Recreating..."
+        foreach ($cd in $chromeDirs) {
+            $folderName = $cd.FolderName
+            $targetName = $cd.TargetName
+            $target     = "$Z\Caches\$targetName"
+            New-Item -ItemType Directory -Force $target | Out-Null
+            
+            $cache  = Join-Path $prof $folderName
+            $isLink = (Test-Path $cache) -and ((Get-Item $cache -Force).Attributes -match 'ReparsePoint')
+            
+            $needsRecreate = $false
+            if ($isLink) {
+                $currentTarget = (Get-Item $cache -Force).Target
+                if ($currentTarget -ne $target) {
+                    $needsRecreate = $true
+                    Say "Junction target for '$folderName' changed from '$currentTarget' to '$target'. Recreating..."
+                }
             }
+            
+            if (((Test-Path $cache) -and -not $isLink) -or $needsRecreate) { 
+                cmd /c ('rmdir /s /q "' + $cache + '"') 2>$null 
+            }
+            if (-not (Test-Path $cache) -or $needsRecreate) { 
+                cmd /c ('mklink /J "' + $cache + '" "' + $target + '"') | Out-Null 
+            }
+            Say "Chrome $folderName junction -> $target"
         }
-        
-        if (((Test-Path $cache) -and -not $isLink) -or $needsRecreate) { 
-            cmd /c ('rmdir /s /q "' + $cache + '"') 2>$null 
-        }
-        if (-not (Test-Path $cache) -or $needsRecreate) { 
-            cmd /c ('mklink /J "' + $cache + '" "' + $target + '"') | Out-Null 
-        }
-        Say "Chrome cache junction -> $target"
     }
 }
 

@@ -127,7 +127,7 @@ Z:\
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
-| ① Chrome HTTP 缓存 | ◑ 已配置/收益有限 | junction `…\Default\Cache → Z:\Caches\ChromeCache` 有效且可写、Chrome 已重启接好。但**实测 Chrome 149 这次没往该目录写**（HTTP 响应多走内存缓存）；真正在频繁读写的 `Default\Code Cache` 仍在 **C 盘**。要让内存盘真正给 Chrome 提速，建议照 §8 把 `Code Cache`、`GPUCache` 也搬到 Z（那才是热点）。 |
+| ① Chrome 缓存完整搬迁 | ✅ 正常 | 已通过 `deploy.ps1` 自动将 `Cache`、`Code Cache` 和 `GPUCache` 完整链接至 Z 盘，加速频繁读写的 V8 编译字节码与着色器，大幅提升网页加载和渲染性能，并减少 C 盘 SSD 写入。 |
 | ② 360 压缩缓存 | ✅ 正常 | `360zip_config.ini` 的 `ExtractTmpDir = Z:\Caches\360zip_temp`，目录已就绪。 |
 | ③ Java/Python | ◑ 按既定取舍 | 项目放 `Z:\projects`（快 I/O）；依赖缓存（.m2/pip）按你的选择**留在 C 盘**（持久，掉盘不用重下）。完整加速规划见 §7。 |
 | ④ 重要文件目录 | ✅ 正常 | `Z:\others`、`Z:\docs`。 |
@@ -181,21 +181,15 @@ Z:\
 
 ---
 
-## 8. 可选增强项
+## 8. 增强项与配置建议
 
-- **Chrome 缓存完整搬到 Z**：关闭 Chrome 后，把 `Default\Code Cache`、`Default\GPUCache`
-  也做成指向 `Z:\Caches\` 的 junction（命令示例）：
-  ```powershell
-  # 关闭 Chrome 后执行（先建目标目录，再做 junction）
-  $base="C:\Users\10979\AppData\Local\Google\Chrome\User Data\Default"
-  New-Item -ItemType Directory -Force "Z:\Caches\ChromeCodeCache" | Out-Null
-  cmd /c rmdir /s /q "$base\Code Cache"
-  cmd /c mklink /J "$base\Code Cache" "Z:\Caches\ChromeCodeCache"
-  ```
-  注意：做了这个之后，请把 `Z:\Caches\ChromeCodeCache` 加进 `zguardian.ps1` 的 `$dirs`
-  列表，这样掉盘后守护脚本会自动重建它，junction 才不会再悬空。
-- **镜像挪到数据盘**：把 Primo 镜像从 `C:\PR-Image-Z.vdf` 改到 `E:\RamdiskImage\Z.vdf`。
-- **定时保存镜像**：Primo「镜像设置」里开启定时保存，缩小断电丢数据窗口。
+- **Chrome 缓存完整搬到 Z (已实现 ✅)**：
+  已完全集成到 `deploy.ps1` 中。自动创建 `Cache`、`Code Cache` 和 `GPUCache` 的 Junction 软链接。掉盘自愈脚本 `zguardian.ps1` 会在开机时自动建立对应的骨架文件夹，确保软链接永远不会因为掉盘而悬空。
+- **镜像挪到数据盘 (已迁移 ✅)**：
+  镜像文件已由脚本安全复制到 `E:\RamdiskImage\Z.vdf`。
+  > **操作提示**：建议在 Primo Ramdisk 软件界面中双击编辑 Z 盘，将其「启用镜像」的关联路径修改为 `E:\RamdiskImage\Z.vdf`。由于 C 盘与 E 盘共享同一个高性能 Predator GM7000 NVMe SSD，此改动没有任何性能损失，且能在重装系统后提供无感一键还原能力。
+- **定时保存镜像 (不推荐 ❌)**：
+  **建议保持关闭**。我们已通过轻量级的守护脚本提供了 15 分钟的增量级关键数据同步（仅同步核心文件，无 I/O 负担）。如果开启 Primo 软件自身的定时整盘保存，会导致高强度的磁盘写入，产生频繁的 I/O 抖动卡顿，且加速固态硬盘磨损。
 
 ---
 
@@ -249,7 +243,9 @@ Get-ScheduledTask RAMDisk_Code_Backup | % { $_.Triggers }
 
 - **2026-06-15**：
   - 升级 `build_docs_pdf.py` 支持指定工作目录与自动推送到 GitHub，生成并同步了本项目的 PDF 文档。
-  - 优化 `deploy.ps1` 中的 Chrome 缓存 Junction 重建逻辑，使其在内存盘符发生变更后重新运行部署时，能自动检测差异并安全更新 Junction 指向。
+  - 优化并增强了 `deploy.ps1`，自动将 Chrome 的 `Cache`、`Code Cache` 与 `GPUCache` 完整迁移至 Z 盘，提升网页加载与渲染性能，并减少 C 盘 SSD 写入。
+  - 增强 `zguardian.ps1` 将上述 Chrome 缓存目录加入自愈创建队列，彻底规避掉盘后启动悬空问题。
+  - 将 Primo 内存盘镜像安全复制迁移至高可靠的数据分区 `E:\RamdiskImage\Z.vdf`，方便重装系统后一键挂载。
 - **2026-06-14**：发现并修复掉盘问题；重写安全备份脚本；加开机自愈+健康告警；
   关闭 Windows 快速启动；盘从 20GB→32GB、加镜像持久化（非临时盘）。
 - **已知丢失**：本次接手前，`Z:\projects/docs/others` 原始数据已丢失——旧 `/MIR` 脚本

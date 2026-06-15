@@ -85,7 +85,7 @@ if (-not (Test-Path "$Z\")) {
 }
 
 # ensure skeleton + cache dirs (idempotent)
-$dirs = @("$Z\projects","$Z\docs","$Z\others","$Z\Caches","$Z\Caches\ChromeCache","$Z\Caches\360zip_temp","$Z\TEMP")
+$dirs = @("$Z\projects","$Z\docs","$Z\others","$Z\Caches","$Z\Caches\ChromeCache","$Z\Caches\ChromeCodeCache","$Z\Caches\ChromeGPUCache","$Z\Caches\360zip_temp","$Z\TEMP")
 foreach ($d in $dirs) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null; Log "mkdir $d" } }
 
 $markerMissing = -not (Test-Path $marker)

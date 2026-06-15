@@ -69,7 +69,7 @@
    powershell -ExecutionPolicy Bypass -File E:\RamdiskGuardian\deploy.ps1
    ```
    它会自动：关闭快速启动 → 建 `Z_Drive_Backup`/`logs` → 注册计划任务（登录+每15分钟）→
-   跑一次守护（建骨架、**从 `E:\Z_Drive_Backup` 还原你的数据**）→ 重建 Chrome 缓存 junction。
+   跑一次守护（建骨架、**从 `E:\Z_Drive_Backup` 还原你的数据**）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
 
    - 盘符不是 Z？`-RamDrive R`（会自动写 `ramdrive.txt`，守护脚本随之适配）。
    - 用户名不同？脚本默认用**当前登录用户**，一般无需指定；要指定加 `-User 名字`。
