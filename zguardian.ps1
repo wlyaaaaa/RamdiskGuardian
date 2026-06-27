@@ -122,9 +122,21 @@ if ($markerMissing) {
 }
 
 # health check: low space?
-$vol = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
-if ($vol) {
-    $free = [math]::Round($vol.SizeRemaining/1GB, 1)
+# NB: Get-Volume on a Primo RAM disk intermittently returns nothing even
+# though the disk is fine (storage-provider hiccup; the filesystem is OK).
+# So retry, and fall back to .NET DriveInfo which reads free space straight
+# from the filesystem. Only WARN if every attempt truly fails.
+$free = $null
+for ($i = 0; $i -lt 3 -and $null -eq $free; $i++) {
+    $vol = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
+    if ($vol -and $vol.SizeRemaining) { $free = [math]::Round($vol.SizeRemaining/1GB, 1); break }
+    try {
+        $di = New-Object System.IO.DriveInfo($ramLetter)
+        if ($di.IsReady) { $free = [math]::Round($di.AvailableFreeSpace/1GB, 1); break }
+    } catch {}
+    Start-Sleep -Milliseconds 500
+}
+if ($null -ne $free) {
     if ($free -lt 2) { Set-Health 'WARN' ("low space: {0} GB free on {1}" -f $free, $Z) }
     else             { Set-Health 'OK'   ("$Z present, {0} GB free" -f $free) }
 } else {
