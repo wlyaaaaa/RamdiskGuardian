@@ -11,16 +11,16 @@
 | 东西 | 在哪 | 重装 C 盘 | 换新电脑 |
 |---|---|---|---|
 | 仓库脚本 `RamdiskGuardian` | E 盘（或 GitHub） | ✅ 留 | 需拷贝/`git clone` |
-| **数据备份 `E:\Z_Drive_Backup`** | E 盘 | ✅ 留（关键！） | **需手动拷到新机** |
+| **数据备份 `E:\Backups\Z_Drive_Backup`** | E 盘 | ✅ 留（关键！） | **需手动拷到新机** |
 | Primo 镜像 `*.vdf` | 取决于你放哪 | 放 C 会丢 / **放 E 不丢** | 需拷贝（或重建空镜像） |
 | Primo 软件 + 授权 | C 盘 | ❌ 需重装+重新授权 | ❌ 需重装+授权 |
 | Z 盘里的实时内容 | 内存 | ❌ 易失 | ❌ 易失 |
 
-> **核心结论**：只要 **`E:\Z_Drive_Backup` 还在**（或已拷到新机），`projects/docs/others`
+> **核心结论**：只要 **`E:\Backups\Z_Drive_Backup` 还在**（或已拷到新机），`projects/docs/others`
 > 就能被守护脚本自动还原。所以：
 > - **强烈建议把 Primo 镜像放到数据盘**（如 `E:\RamdiskImage\Z.vdf`），这样重装系统盘也不丢镜像。
->   （本机当前镜像在 `C:\PR-Image-Z.vdf`，重装前请先迁到 E 盘或确认 `E:\Z_Drive_Backup` 是最新的。）
-> - 重装/换机**之前**，确认 `E:\Z_Drive_Backup` 是最新（守护脚本每 15 分钟在更新它），
+>   （本机当前镜像在 `C:\PR-Image-Z.vdf`，重装前请先迁到 E 盘或确认 `E:\Backups\Z_Drive_Backup` 是最新的。）
+> - 重装/换机**之前**，确认 `E:\Backups\Z_Drive_Backup` 是最新（守护脚本每 15 分钟在更新它），
 >   且仓库已 `git push` 到 GitHub。
 
 ---
@@ -68,8 +68,8 @@
    ```powershell
    powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\RamdiskGuardian\deploy.ps1
    ```
-   它会自动：关闭快速启动 → 建 `Z_Drive_Backup`/`logs` → 注册计划任务（登录+每15分钟）→
-   跑一次守护（建骨架、**从 `E:\Z_Drive_Backup` 还原你的数据**）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
+   它会自动：关闭快速启动 → 建 `Backups\Z_Drive_Backup`/`logs` → 注册计划任务（登录+每15分钟）→
+   跑一次守护（建骨架、**从 `E:\Backups\Z_Drive_Backup` 还原你的数据**）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
 
    - 盘符不是 Z？`-RamDrive R`（会自动写 `ramdrive.txt`，守护脚本随之适配）。
    - 用户名不同？脚本默认用**当前登录用户**，一般无需指定；要指定加 `-User 名字`。
@@ -98,7 +98,7 @@ Get-ScheduledTask RAMDisk_Code_Backup | Format-List TaskName,State
 
 脚本已尽量自适配，无需改代码：
 - **仓库位置**：守护脚本用 `$PSScriptRoot` 自动定位，放哪个盘哪个目录都行。
-- **数据盘盘符**：自动取"仓库所在盘"，备份固定在 `<该盘>\Z_Drive_Backup`。
+- **数据盘盘符**：自动取"仓库所在盘"，备份固定在 `<该盘>\Backups\Z_Drive_Backup`。
 - **内存盘盘符**：默认 `Z`，用 `deploy.ps1 -RamDrive X` 覆盖（写入 `ramdrive.txt`）。
 - **用户名**：计划任务用当前用户；Chrome junction 按当前用户路径自动找。
 - **Chrome**：部署时若 Chrome 开着会跳过 junction（提示你关掉重跑）。
@@ -122,6 +122,6 @@ Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 
 ## 7. 一句话清单（熟手版）
 
 ```
-重装前: 确认 E:\Z_Drive_Backup 最新 + git push；镜像最好在 E 盘
+重装前: 确认 E:\Backups\Z_Drive_Backup 最新 + git push；镜像最好在 E 盘
 重装后: 装Primo+授权 → 建非临时32G盘(启用镜像) → clone仓库 → 管理员跑 deploy.ps1 → 重启验证Z自动回来
 ```

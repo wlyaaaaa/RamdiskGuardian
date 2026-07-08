@@ -5,7 +5,7 @@
 #
 #  PORTABLE PATHS (survives reinstall / new PC / moved repo):
 #    repo root = $PSScriptRoot ; data drive = drive of the repo ;
-#    backup = <dataDrive>\Z_Drive_Backup ; RAM letter = 'Z' or repo\ramdrive.txt
+#    backup = <dataDrive>\Backups\Z_Drive_Backup ; RAM letter = 'Z' or repo\ramdrive.txt
 #
 #  WHEN DOES IT PULL FROM BACKUP (heal/restore)?  -> only when needed:
 #    * marker  <Z>\.ramdisk_ready  MISSING  = disk is fresh / just dropped
@@ -39,7 +39,8 @@ $lastF  = Join-Path $logDir '.lasthealth'
 $bootF  = Join-Path $logDir '.lastboot'
 
 $dataDrive  = Split-Path $root -Qualifier            # e.g. 'E:'
-$backupRoot = Join-Path "$dataDrive\" 'Z_Drive_Backup'
+$backupRoot = Join-Path (Join-Path "$dataDrive\" 'Backups') 'Z_Drive_Backup'
+if (-not (Test-Path $backupRoot)) { New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null }
 
 $ramLetter = 'Z'
 $rdf = Join-Path $root 'ramdrive.txt'

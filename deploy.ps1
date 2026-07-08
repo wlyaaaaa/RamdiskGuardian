@@ -9,7 +9,7 @@
 
   What this does (all idempotent / re-runnable):
     - disables Windows Fast Startup
-    - creates <dataDrive>\Z_Drive_Backup and .\logs
+    - creates <dataDrive>\Backups\Z_Drive_Backup and .\logs
     - registers Task "RAMDisk_Code_Backup" (logon + every N min)
     - runs the guardian once (builds the Z: skeleton)
     - (re)creates the Chrome cache junction -> <Z>\Caches\ChromeCache
@@ -36,7 +36,7 @@ if (-not $me.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
 $repo = $PSScriptRoot
 if (-not (Test-Path (Join-Path $repo 'zguardian.ps1'))) { throw "zguardian.ps1 not found next to deploy.ps1 ($repo)." }
 $dataDrive = Split-Path $repo -Qualifier            # e.g. 'E:'
-$backup    = Join-Path "$dataDrive\" 'Z_Drive_Backup'
+$backup    = Join-Path (Join-Path "$dataDrive\" 'Backups') 'Z_Drive_Backup'
 $Z         = "${RamDrive}:"
 Say "repo=$repo  dataDrive=$dataDrive  ramDisk=$Z  user=$User  interval=${IntervalMinutes}m"
 
