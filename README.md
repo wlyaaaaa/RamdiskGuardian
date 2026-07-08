@@ -72,7 +72,7 @@ Primo 里只要**盘是非临时 + 勾了「启用镜像」**，默认行为就�
 ## 3. 第 ③ 层：守护脚本（本仓库核心）
 
 **脚本**：`zguardian.ps1`
-**调用链**：计划任务 `RAMDisk_Code_Backup` → `run_hidden.vbs`（隐藏窗口）→ `sync_code.bat` → `zguardian.ps1`
+**调用链**：计划任务 `RAMDisk_Code_Backup` → `run_hidden.vbs`（隐藏窗口）→ `zguardian.ps1`
 **触发**：用户登录时 + 之后每 **15 分钟**；身份 `10979` / **交互会话（不是会话0）** / 最高权限。
 
 > 为什么是交互会话而不是会话0：备份要在你登录、真正改动文件时跑才有意义；而且 Z 是
@@ -203,7 +203,6 @@ RamdiskGuardian/
 ├─ DEPLOY.pdf                     快速部署指南的 PDF（自动同步到 GitHub）
 ├─ deploy.ps1                     一键部署（关快速启动/建目录/注册任务/Chrome junction，幂等）
 ├─ zguardian.ps1                  守护脚本（备份 + 掉盘自愈 + 健康告警；路径可移植）
-├─ sync_code.bat                  入口（被 VBS 调用，%~dp0 转调 zguardian.ps1）
 ├─ run_hidden.vbs                 隐藏窗口启动器（被计划任务调用，自定位）
 ├─ ramdrive.txt                   可选：非 Z 盘符时由 deploy.ps1 写入
 ├─ .gitignore                     忽略 logs/ 等运行时产物

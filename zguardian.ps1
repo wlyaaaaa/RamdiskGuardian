@@ -66,9 +66,42 @@ function NewestUtc($p){
     $f = Get-ChildItem $p -Recurse -File -Force -EA SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     if ($f) { return $f.LastWriteTimeUtc } else { return [datetime]::MinValue }
 }
+function Assert-BackupDestinationSpace {
+    param(
+        [string]$DriveQualifier,
+        [string]$BackupRoot,
+        [double]$MinimumFreeGB = 10
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $BackupRoot)) {
+            Set-Health 'ERROR' "backup destination $BackupRoot is not accessible. Aborting before robocopy."
+            exit 0
+        }
+
+        $driveName = $DriveQualifier.TrimEnd('\')
+        $di = [System.IO.DriveInfo]::new($driveName)
+        if (-not $di.IsReady) {
+            Set-Health 'ERROR' "backup destination drive $driveName is not ready. Aborting before robocopy."
+            exit 0
+        }
+
+        $freeGB = [math]::Round($di.AvailableFreeSpace / 1GB, 1)
+        if ($freeGB -lt $MinimumFreeGB) {
+            Set-Health 'ERROR' "backup destination $BackupRoot on $driveName has only $freeGB GB free (< $MinimumFreeGB GB). Aborting before robocopy."
+            exit 0
+        }
+
+        Log "backup destination space OK: $BackupRoot on $driveName has $freeGB GB free"
+    } catch {
+        Set-Health 'ERROR' "backup destination space check failed for $BackupRoot on ${DriveQualifier}: $($_.Exception.Message). Aborting before robocopy."
+        exit 0
+    }
+}
 
 if ((Test-Path $log) -and ((Get-Item $log).Length -gt 1MB)) { Move-Item $log "$log.1" -Force }
 Log "--- guardian run (root=$root data=$dataDrive ram=$Z) ---"
+Assert-BackupDestinationSpace -DriveQualifier $dataDrive -BackupRoot $backupRoot -MinimumFreeGB 10
 
 # detect "first run since this boot" (the boot-loaded image may be stale)
 $bootTicks = "0"
