@@ -29,7 +29,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 # ---- portable locations -------------------------------------------------
 $root = $PSScriptRoot; if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $root) { $root = 'E:\RamdiskGuardian' }
+if (-not $root) { $root = 'E:\Projects\Tools\RamdiskGuardian' }
 $logDir = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $log    = Join-Path $logDir 'guardian.log'

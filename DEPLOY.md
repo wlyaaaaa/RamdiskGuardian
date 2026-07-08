@@ -58,15 +58,15 @@
 
 ## 3. Part B — 一键部署（自动完成其余全部）
 
-1. 把仓库放到数据盘，例如 `E:\RamdiskGuardian`：
+1. 把仓库放到数据盘，例如 `E:\Projects\Tools\RamdiskGuardian`：
    ```powershell
    # 方式一：从 GitHub 拉
-   git clone https://github.com/wlyaaaaa/RamdiskGuardian.git E:\RamdiskGuardian
+   git clone https://github.com/wlyaaaaa/RamdiskGuardian.git E:\Projects\Tools\RamdiskGuardian
    # 方式二：直接把备份的仓库文件夹拷过去
    ```
 2. **以管理员身份**打开 PowerShell，运行部署脚本：
    ```powershell
-   powershell -ExecutionPolicy Bypass -File E:\RamdiskGuardian\deploy.ps1
+   powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\RamdiskGuardian\deploy.ps1
    ```
    它会自动：关闭快速启动 → 建 `Z_Drive_Backup`/`logs` → 注册计划任务（登录+每15分钟）→
    跑一次守护（建骨架、**从 `E:\Z_Drive_Backup` 还原你的数据**）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
@@ -83,7 +83,7 @@
 
 ```powershell
 # 看健康状态（应 OK）
-Get-Content E:\RamdiskGuardian\logs\STATUS.txt
+Get-Content E:\Projects\Tools\RamdiskGuardian\logs\STATUS.txt
 # 看任务
 Get-ScheduledTask RAMDisk_Code_Backup | Format-List TaskName,State
 ```

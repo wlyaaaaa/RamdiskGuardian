@@ -102,7 +102,7 @@ Primo 里只要**盘是非临时 + 勾了「启用镜像」**，默认行为就�
 - `WARN` ：Z 剩余空间 < 2GB（快满了）。
 - 状态从 OK 变 WARN/ERROR 时，**弹一次 `msg` 弹窗**，并追加 `logs\alerts.log`。
 
-> 你随时双击 `E:\RamdiskGuardian\logs\STATUS.txt` 就能看最新健康状态。
+> 你随时双击 `E:\Projects\Tools\RamdiskGuardian\logs\STATUS.txt` 就能看最新健康状态。
 
 ---
 
@@ -225,11 +225,11 @@ RamdiskGuardian/
 
 ```powershell
 # 手动跑一次守护（重建骨架/备份/还原）
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\RamdiskGuardian\zguardian.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File E:\Projects\Tools\RamdiskGuardian\zguardian.ps1
 
 # 看健康状态 / 日志
-Get-Content E:\RamdiskGuardian\logs\STATUS.txt
-Get-Content E:\RamdiskGuardian\logs\guardian.log -Tail 20
+Get-Content E:\Projects\Tools\RamdiskGuardian\logs\STATUS.txt
+Get-Content E:\Projects\Tools\RamdiskGuardian\logs\guardian.log -Tail 20
 
 # 看/改备份频率（计划任务）
 Get-ScheduledTask RAMDisk_Code_Backup | % { $_.Triggers }
