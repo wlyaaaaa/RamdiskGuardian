@@ -11,7 +11,7 @@
     - disables Windows Fast Startup
     - creates <dataDrive>\Backups\Z_Drive_Backup and .\logs
     - registers Task "RAMDisk_Code_Backup" (logon + every N min)
-    - runs the guardian once (builds the Z: skeleton)
+    - runs the guardian once (builds the cache-first Z: skeleton)
     - (re)creates the Chrome cache junction -> <Z>\Caches\ChromeCache
 
   Usage:
@@ -70,7 +70,7 @@ if (-not (Test-Path "$Z\")) {
 }
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'zguardian.ps1')
-Say 'guardian ran (Z: skeleton built / data restored if any)'
+Say 'guardian ran (cache-first Z: skeleton built / legacy data restored if any)'
 
 # 6) Chrome Cache, Code Cache, and GPUCache junctions -> <Z>\Caches  (only if Chrome profile exists)
 $prof = "C:\Users\$User\AppData\Local\Google\Chrome\User Data\Default"
@@ -83,16 +83,16 @@ if (Test-Path $prof) {
             @{ FolderName = 'Code Cache'; TargetName = 'ChromeCodeCache' },
             @{ FolderName = 'GPUCache'; TargetName = 'ChromeGPUCache' }
         )
-        
+
         foreach ($cd in $chromeDirs) {
             $folderName = $cd.FolderName
             $targetName = $cd.TargetName
             $target     = "$Z\Caches\$targetName"
             New-Item -ItemType Directory -Force $target | Out-Null
-            
+
             $cache  = Join-Path $prof $folderName
             $isLink = (Test-Path $cache) -and ((Get-Item $cache -Force).Attributes -match 'ReparsePoint')
-            
+
             $needsRecreate = $false
             if ($isLink) {
                 $currentTarget = (Get-Item $cache -Force).Target
@@ -101,12 +101,12 @@ if (Test-Path $prof) {
                     Say "Junction target for '$folderName' changed from '$currentTarget' to '$target'. Recreating..."
                 }
             }
-            
-            if (((Test-Path $cache) -and -not $isLink) -or $needsRecreate) { 
-                cmd /c ('rmdir /s /q "' + $cache + '"') 2>$null 
+
+            if (((Test-Path $cache) -and -not $isLink) -or $needsRecreate) {
+                cmd /c ('rmdir /s /q "' + $cache + '"') 2>$null
             }
-            if (-not (Test-Path $cache) -or $needsRecreate) { 
-                cmd /c ('mklink /J "' + $cache + '" "' + $target + '"') | Out-Null 
+            if (-not (Test-Path $cache) -or $needsRecreate) {
+                cmd /c ('mklink /J "' + $cache + '" "' + $target + '"') | Out-Null
             }
             Say "Chrome $folderName junction -> $target"
         }

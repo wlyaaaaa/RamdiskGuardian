@@ -39,3 +39,22 @@ Assert-Text 'README call chain invokes zguardian directly from VBS' (
 Assert-Text 'README active file list does not advertise sync_code.bat as entrypoint' (
     $readmeText -notmatch '(?m)^\s*├─ sync_code\.bat\s+入口'
 )
+
+Assert-Text 'cache-first personal and work skeleton is created' (
+    $guardianText -match '\$Z\\Caches\\Personal' -and
+    $guardianText -match '\$Z\\Caches\\Work' -and
+    $guardianText -match '\$Z\\Scratch\\Personal' -and
+    $guardianText -match '\$Z\\Scratch\\Work'
+)
+
+Assert-Text 'host memory and cache soft-limit health checks are present' (
+    $guardianText -match 'Win32_PerfFormattedData_PerfOS_Memory' -and
+    $guardianText -match '\$cacheSoftLimitGB\s*=\s*8' -and
+    $guardianText -match '\$minimumAvailableMemoryGB\s*=\s*8' -and
+    $guardianText -match '\$minimumCommitHeadroomGB\s*=\s*4'
+)
+
+Assert-Text 'README makes new Z usage cache-only and points to PCConfig policy' (
+    $readmeText -match 'cache-only' -and
+    $readmeText -match 'dev_storage_policy\.md'
+)

@@ -1,7 +1,7 @@
 # 快速部署指南（系统重装 / 换电脑）
 
 > 目标：在一台**重装系统**或**全新电脑**上，把 Z 内存盘这套（开机自启 + 镜像持久化 +
-> 守护备份/自愈）**最快速地重新搭起来**，并尽量不丢数据。
+> 缓存骨架/自愈 + 旧通道兼容备份）**最快速地重新搭起来**。
 > 配合 `README.md`（原理与运维）一起看。
 
 ---
@@ -11,17 +11,15 @@
 | 东西 | 在哪 | 重装 C 盘 | 换新电脑 |
 |---|---|---|---|
 | 仓库脚本 `RamdiskGuardian` | E 盘（或 GitHub） | ✅ 留 | 需拷贝/`git clone` |
-| **数据备份 `E:\Backups\Z_Drive_Backup`** | E 盘 | ✅ 留（关键！） | **需手动拷到新机** |
+| 旧通道备份 `E:\Backups\Z_Drive_Backup` | E 盘 | ✅ 留 | 仅在仍有旧版数据时手动拷到新机 |
 | Primo 镜像 `*.vdf` | 取决于你放哪 | 放 C 会丢 / **放 E 不丢** | 需拷贝（或重建空镜像） |
 | Primo 软件 + 授权 | C 盘 | ❌ 需重装+重新授权 | ❌ 需重装+授权 |
 | Z 盘里的实时内容 | 内存 | ❌ 易失 | ❌ 易失 |
 
-> **核心结论**：只要 **`E:\Backups\Z_Drive_Backup` 还在**（或已拷到新机），`projects/docs/others`
-> 就能被守护脚本自动还原。所以：
-> - **强烈建议把 Primo 镜像放到数据盘**（如 `E:\RamdiskImage\Z.vdf`），这样重装系统盘也不丢镜像。
->   （本机当前镜像在 `C:\PR-Image-Z.vdf`，重装前请先迁到 E 盘或确认 `E:\Backups\Z_Drive_Backup` 是最新的。）
-> - 重装/换机**之前**，确认 `E:\Backups\Z_Drive_Backup` 是最新（守护脚本每 15 分钟在更新它），
->   且仓库已 `git push` 到 GitHub。
+> **核心结论**：新用途只有缓存和 scratch，本来就应允许丢失并自动重建。`projects/docs/others`
+> 只是旧版兼容通道；若其中仍有旧数据，`E:\Backups\Z_Drive_Backup` 可供守护脚本还原。所以：
+> - 本机镜像当前位于 `E:\RamdiskImage\Z.vdf`；新机可复用，或按相同配置重建空镜像。
+> - 重装/换机前，只有在旧通道仍有数据时才需要确认该备份最新；仓库源码按正常 Git 备份处理。
 
 ---
 
@@ -69,7 +67,7 @@
    powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\RamdiskGuardian\deploy.ps1
    ```
    它会自动：关闭快速启动 → 建 `Backups\Z_Drive_Backup`/`logs` → 注册计划任务（登录+每15分钟）→
-   跑一次守护（建骨架、**从 `E:\Backups\Z_Drive_Backup` 还原你的数据**）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
+   跑一次守护（建立 cache-first 骨架、按需从 `E:\Backups\Z_Drive_Backup` 还原旧通道）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
 
    - 盘符不是 Z？`-RamDrive R`（会自动写 `ramdrive.txt`，守护脚本随之适配）。
    - 用户名不同？脚本默认用**当前登录用户**，一般无需指定；要指定加 `-User 名字`。

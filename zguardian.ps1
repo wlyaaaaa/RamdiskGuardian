@@ -17,6 +17,10 @@
 #    On every OTHER run it does NOT pull, so files you delete on Z are
 #    respected (not resurrected).
 #
+#  NEW USE IS CACHE-ONLY.  projects/docs/others are legacy compatibility
+#  channels: do not add new authoritative data there.  Their existing
+#  backup behavior remains append-only for safe recovery.
+#
 #  BACKUP (every run, append-only & newer-wins, robocopy /E /XO, no /PURGE):
 #    never deletes from the backup, never overwrites a newer backup file
 #    with an older disk file. A drop / stale image can NEVER shrink or
@@ -48,6 +52,9 @@ if (Test-Path $rdf) { $t = (Get-Content $rdf -EA SilentlyContinue | Select-Objec
 $Z = "${ramLetter}:"
 $marker = "$Z\.ramdisk_ready"
 $names  = @('projects','docs','others')
+$cacheSoftLimitGB = 8
+$minimumAvailableMemoryGB = 8
+$minimumCommitHeadroomGB = 4
 
 function Log($m){ ("{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) | Out-File -FilePath $log -Append -Encoding utf8 }
 function Set-Health([string]$health,[string]$detail){
@@ -118,8 +125,14 @@ if (-not (Test-Path "$Z\")) {
     exit 0
 }
 
-# ensure skeleton + cache dirs (idempotent)
-$dirs = @("$Z\projects","$Z\docs","$Z\others","$Z\Caches","$Z\Caches\ChromeCache","$Z\Caches\ChromeCodeCache","$Z\Caches\ChromeGPUCache","$Z\Caches\360zip_temp","$Z\TEMP")
+# ensure legacy compatibility channels and the cache-first skeleton (idempotent)
+$dirs = @(
+    "$Z\projects", "$Z\docs", "$Z\others",
+    "$Z\Caches", "$Z\Caches\Personal", "$Z\Caches\Work",
+    "$Z\Caches\ChromeCache", "$Z\Caches\ChromeCodeCache", "$Z\Caches\ChromeGPUCache", "$Z\Caches\360zip_temp",
+    "$Z\Scratch", "$Z\Scratch\Personal", "$Z\Scratch\Work",
+    "$Z\TEMP"
+)
 foreach ($d in $dirs) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null; Log "mkdir $d" } }
 
 $markerMissing = -not (Test-Path $marker)
@@ -155,24 +168,60 @@ if ($markerMissing) {
     Log 'marker written'
 }
 
-# health check: low space?
+# health check: RAM-disk space plus host-memory pressure.
 # NB: Get-Volume on a Primo RAM disk intermittently returns nothing even
 # though the disk is fine (storage-provider hiccup; the filesystem is OK).
 # So retry, and fall back to .NET DriveInfo which reads free space straight
 # from the filesystem. Only WARN if every attempt truly fails.
 $free = $null
+$total = $null
 for ($i = 0; $i -lt 3 -and $null -eq $free; $i++) {
     $vol = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
-    if ($vol -and $vol.SizeRemaining) { $free = [math]::Round($vol.SizeRemaining/1GB, 1); break }
+    if ($vol -and $vol.SizeRemaining) {
+        $free = [math]::Round($vol.SizeRemaining/1GB, 1)
+        $total = [math]::Round($vol.Size/1GB, 1)
+        break
+    }
     try {
         $di = New-Object System.IO.DriveInfo($ramLetter)
-        if ($di.IsReady) { $free = [math]::Round($di.AvailableFreeSpace/1GB, 1); break }
+        if ($di.IsReady) {
+            $free = [math]::Round($di.AvailableFreeSpace/1GB, 1)
+            $total = [math]::Round($di.TotalSize/1GB, 1)
+            break
+        }
     } catch {}
     Start-Sleep -Milliseconds 500
 }
 if ($null -ne $free) {
-    if ($free -lt 2) { Set-Health 'WARN' ("low space: {0} GB free on {1}" -f $free, $Z) }
-    else             { Set-Health 'OK'   ("$Z present, {0} GB free" -f $free) }
+    $warnings = @()
+    $used = if ($null -ne $total) { [math]::Round($total - $free, 1) } else { $null }
+    if ($free -lt 2) { $warnings += "low RAM-disk space: $free GB free" }
+    if ($null -ne $used -and $used -gt $cacheSoftLimitGB) {
+        $warnings += "RAM-disk use $used GB exceeds $cacheSoftLimitGB GB cache soft limit"
+    }
+
+    $memoryDetail = 'host memory unavailable'
+    try {
+        $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
+        $availableMemoryGB = [math]::Round($memory.AvailableMBytes / 1024, 1)
+        $commitHeadroomGB = [math]::Round(($memory.CommitLimit - $memory.CommittedBytes) / 1GB, 1)
+        $memoryDetail = "host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB"
+        if ($availableMemoryGB -lt $minimumAvailableMemoryGB) {
+            $warnings += "host available memory $availableMemoryGB GB is below $minimumAvailableMemoryGB GB"
+        }
+        if ($commitHeadroomGB -lt $minimumCommitHeadroomGB) {
+            $warnings += "commit headroom $commitHeadroomGB GB is below $minimumCommitHeadroomGB GB"
+        }
+    } catch {
+        $warnings += 'host memory query failed'
+    }
+
+    $diskDetail = if ($null -ne $used) { "$Z present, $used GB used, $free GB free" } else { "$Z present, $free GB free" }
+    if ($warnings.Count -gt 0) {
+        Set-Health 'WARN' (($warnings -join '; ') + "; $diskDetail; $memoryDetail")
+    } else {
+        Set-Health 'OK' "$diskDetail; $memoryDetail"
+    }
 } else {
     Set-Health 'WARN' "$Z present but volume query failed"
 }
