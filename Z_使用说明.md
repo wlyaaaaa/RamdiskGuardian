@@ -1,0 +1,37 @@
+# Z: 使用说明
+
+Z: 是 32 GiB 动态 RAM Disk，当前定位是 **cache-only**：只放丢失后能自动重建的热缓存和 scratch。它的价值是减少极热、细碎的临时 I/O；不是所有程序都放进来，也不追求把 32 GiB 用满。
+
+## 目录
+
+```text
+Z:\
+├─ Caches\
+│  ├─ Personal\
+│  └─ Work\
+├─ Scratch\
+│  ├─ Personal\
+│  └─ Work\
+├─ TEMP\
+└─ .ramdisk_ready
+```
+
+Chrome、360 压缩和 WeFlow 已有自己的 `Caches` 子目录。个人与工作只是组织边界，共享内存盘不是安全边界。
+
+## 可以放
+
+- 浏览器代码/GPU 缓存、IDE 索引、解压临时文件；
+- 小型测试 scratch；
+- 经真实计时证明受 I/O 限制、体积有上限且可完全重建的增量构建目录。
+
+## 不要放
+
+- 不要把任何 Git 正式仓库或 worktree 放在 Z；个人新仓库默认去 `V:\Personal\Projects`。
+- 不要放唯一源码、文档、数据库、模型、聊天/健康/工作证据、凭据或备份。
+- 不要把系统全局 `TEMP/TMP`、Docker/WSL 或无界包缓存指向 Z。
+
+Z 中内容随重启、掉盘或镜像变化而消失是正常设计。缓存总量以 8 GiB 为软上限；守护器只补齐目录和本说明、监控空间/内存，不备份缓存，也不自动删除未知缓存。
+
+计划任务仍叫 `RAMDisk_Code_Backup`，这是为兼容保留的旧名字，不表示当前会备份数据。
+
+机器级权威：`E:\PCConfig\docs\governance\dev_storage_policy.md`。

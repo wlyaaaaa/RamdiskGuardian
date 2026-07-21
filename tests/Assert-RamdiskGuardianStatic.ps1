@@ -11,24 +11,33 @@ function Assert-Text {
 }
 
 $guardian = Join-Path $RepoRoot 'zguardian.ps1'
+$deploy = Join-Path $RepoRoot 'deploy.ps1'
 $readme = Join-Path $RepoRoot 'README.md'
+$usage = Join-Path $RepoRoot 'Z_使用说明.md'
 
 $guardianText = Get-Content -LiteralPath $guardian -Raw -Encoding utf8
+$deployText = Get-Content -LiteralPath $deploy -Raw -Encoding utf8
 $readmeText = Get-Content -LiteralPath $readme -Raw -Encoding utf8
+$usageText = if (Test-Path -LiteralPath $usage) { Get-Content -LiteralPath $usage -Raw -Encoding utf8 } else { '' }
 
 $tokens = $null
 $errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($guardian, [ref]$tokens, [ref]$errors) | Out-Null
 Assert-Text 'zguardian.ps1 parses' ($errors.Count -eq 0)
+$tokens = $null
+$errors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($deploy, [ref]$tokens, [ref]$errors) | Out-Null
+Assert-Text 'deploy.ps1 parses' ($errors.Count -eq 0)
 
-Assert-Text 'backup destination space check is fail-fast before robocopy' (
-    $guardianText -match 'Assert-BackupDestinationSpace' -and
-    $guardianText -match 'Aborting before robocopy' -and
-    $guardianText -notmatch '\$skipBackup'
+Assert-Text 'retired legacy backup channels are absent from active guardian behavior' (
+    $guardianText -notmatch 'robocopy' -and
+    $guardianText -notmatch 'Z_Drive_Backup' -and
+    $guardianText -notmatch '\$Z\\(?:projects|docs|others)'
 )
 
-Assert-Text 'backup destination space failure updates health output' (
-    $guardianText -match '(?s)Set-Health\s+''ERROR''.*backup destination'
+Assert-Text 'deployer does not recreate the retired backup destination' (
+    $deployText -notmatch 'Z_Drive_Backup' -and
+    $deployText -notmatch '\$backup\b'
 )
 
 Assert-Text 'README call chain invokes zguardian directly from VBS' (
@@ -45,6 +54,19 @@ Assert-Text 'cache-first personal and work skeleton is created' (
     $guardianText -match '\$Z\\Caches\\Work' -and
     $guardianText -match '\$Z\\Scratch\\Personal' -and
     $guardianText -match '\$Z\\Scratch\\Work'
+)
+
+Assert-Text 'canonical usage guide exists and guardian self-heals it to the RAM disk root' (
+    (Test-Path -LiteralPath $usage) -and
+    $guardianText -match 'Z_\*\.md' -and
+    $guardianText -match 'Copy-Item' -and
+    $guardianText -match 'Get-FileHash'
+)
+
+Assert-Text 'root usage guide reserves Z for cache and scratch only' (
+    $usageText -match 'cache-only' -and
+    $usageText -match 'V:\\Personal\\Projects' -and
+    $usageText -match '不要.*Git.*仓库'
 )
 
 Assert-Text 'host memory and cache soft-limit health checks are present' (

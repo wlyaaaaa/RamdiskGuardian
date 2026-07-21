@@ -1,125 +1,55 @@
-# 快速部署指南（系统重装 / 换电脑）
+# RamdiskGuardian 部署 / 恢复
 
-> 目标：在一台**重装系统**或**全新电脑**上，把 Z 内存盘这套（开机自启 + 镜像持久化 +
-> 缓存骨架/自愈 + 旧通道兼容备份）**最快速地重新搭起来**。
-> 配合 `README.md`（原理与运维）一起看。
+适用于系统重装、换电脑或计划任务丢失。Z 是 cache-only RAM Disk，不需要搬运缓存或旧备份。
 
----
+## 前置配置
 
-## 0. 先理解：哪些会丢、哪些能留
+在 Primo Ramdisk 中创建：
 
-| 东西 | 在哪 | 重装 C 盘 | 换新电脑 |
-|---|---|---|---|
-| 仓库脚本 `RamdiskGuardian` | E 盘（或 GitHub） | ✅ 留 | 需拷贝/`git clone` |
-| 旧通道备份 `E:\Backups\Z_Drive_Backup` | E 盘 | ✅ 留 | 仅在仍有旧版数据时手动拷到新机 |
-| Primo 镜像 `*.vdf` | 取决于你放哪 | 放 C 会丢 / **放 E 不丢** | 需拷贝（或重建空镜像） |
-| Primo 软件 + 授权 | C 盘 | ❌ 需重装+重新授权 | ❌ 需重装+授权 |
-| Z 盘里的实时内容 | 内存 | ❌ 易失 | ❌ 易失 |
+- 盘符 `Z:`；
+- NTFS、32 GiB；
+- 动态内存和紧凑模式；
+- 非临时盘；
+- 镜像启用，路径 `E:\RamdiskImage\Z.vdf`。
 
-> **核心结论**：新用途只有缓存和 scratch，本来就应允许丢失并自动重建。`projects/docs/others`
-> 只是旧版兼容通道；若其中仍有旧数据，`E:\Backups\Z_Drive_Backup` 可供守护脚本还原。所以：
-> - 本机镜像当前位于 `E:\RamdiskImage\Z.vdf`；新机可复用，或按相同配置重建空镜像。
-> - 重装/换机前，只有在旧通道仍有数据时才需要确认该备份最新；仓库源码按正常 Git 备份处理。
+Primo 没有可依赖的本仓库命令行建盘流程；界面参考 `docs/primo_setup.png`。
 
----
+## 部署
 
-## 1. 前置条件
-
-- 一块**数据盘**（本机是 `E:`，3TB+）。仓库和备份都放它上面，跨系统重装不丢。
-- 管理员权限。
-- 联网（用于 `git clone` 仓库，可选）。
-
----
-
-## 2. Part A — 安装 Primo 并手动建盘（唯一不能脚本化的部分，约 2 分钟）
-
-> Primo Ramdisk 没有命令行，建盘只能在它界面里点。参考仓库 `docs/primo_setup.png`。
-
-1. **安装 Primo Ramdisk 旗舰版**（本机版本 6.6.0），输入授权码激活。
-2. 打开 Primo → 点工具栏**绿色 ➕（创建磁盘）**，按下表设置（对应那几个子对话框）：
-
-   | 对话框 | 设置 |
-   |---|---|
-   | 组件设置 → **内存盘** | 勾 **动态内存管理** + **紧凑模式** |
-   | 虚拟硬盘参数 → 基本 | 硬盘容量 **32768 MB**；盘符 **Z** |
-   | 虚拟硬盘参数 → 类型 | **SCSI 硬盘** |
-   | 虚拟硬盘参数 → **属性** | **「临时」不要勾**（不勾 = 持久盘 = 开机自启，这就是关键！） |
-   | 文件系统设置 → 基本 | **NTFS**；逻辑卷卷标 **RAMDISK**；勾「自动创建 TEMP 文件夹」 |
-   | **启用镜像** | 勾上，浏览选镜像路径——**建议 `E:\RamdiskImage\Z.vdf`**（放数据盘，重装不丢） |
-
-3. 点**确定**完成。列表里出现 `RAMDISK (Z:)` 即成功。
-
-> 说明：6.6 没有独立的「随系统启动创建」勾选框——**不勾「临时」+ 关闭快速启动（Part B 自动做）** 就是开机自启。
-> 「启用镜像」+ 非临时盘 = 默认开机加载、关机保存（持久化）。想要定时保存防断电，可在「镜像设置」里开。
-
----
-
-## 3. Part B — 一键部署（自动完成其余全部）
-
-1. 把仓库放到数据盘，例如 `E:\Projects\Tools\RamdiskGuardian`：
-   ```powershell
-   # 方式一：从 GitHub 拉
-   git clone https://github.com/wlyaaaaa/RamdiskGuardian.git E:\Projects\Tools\RamdiskGuardian
-   # 方式二：直接把备份的仓库文件夹拷过去
-   ```
-2. **以管理员身份**打开 PowerShell，运行部署脚本：
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\RamdiskGuardian\deploy.ps1
-   ```
-   它会自动：关闭快速启动 → 建 `Backups\Z_Drive_Backup`/`logs` → 注册计划任务（登录+每15分钟）→
-   跑一次守护（建立 cache-first 骨架、按需从 `E:\Backups\Z_Drive_Backup` 还原旧通道）→ 重建 Chrome 缓存 junctions (Cache, Code Cache, GPUCache)。
-
-   - 盘符不是 Z？`-RamDrive R`（会自动写 `ramdrive.txt`，守护脚本随之适配）。
-   - 用户名不同？脚本默认用**当前登录用户**，一般无需指定；要指定加 `-User 名字`。
-   - 备份间隔改成 10 分钟？`-IntervalMinutes 10`。
-
-3. **360 压缩**（如已装）：在 360 设置里把「解压缓存目录」设为 `Z:\Caches\360zip_temp`（脚本已建好该目录）。
-
----
-
-## 4. Part C — 验证
+在管理员 PowerShell 中运行：
 
 ```powershell
-# 看健康状态（应 OK）
+Set-Location E:\Projects\Tools\RamdiskGuardian
+.\deploy.ps1
+```
+
+脚本会：
+
+1. 关闭 Windows 快速启动；
+2. 建立仓库 `logs`；
+3. 注册兼容名称 `RAMDisk_Code_Backup` 的计划任务（登录 + 每 15 分钟）；
+4. 运行一次守护器，建立 cache-only 骨架和 `Z:\使用说明.md`；
+5. 在 Chrome 已关闭时，重建 Cache / Code Cache / GPUCache junction；
+6. 提示把 360 压缩临时目录设为 `Z:\Caches\360zip_temp`。
+
+任务名保留旧名称是为了避免不必要的任务注册、监控和恢复引用漂移；它不再执行数据备份。
+
+## 验收
+
+```powershell
 Get-Content E:\Projects\Tools\RamdiskGuardian\logs\STATUS.txt
-# 看任务
-Get-ScheduledTask RAMDisk_Code_Backup | Format-List TaskName,State
+Get-ScheduledTaskInfo RAMDisk_Code_Backup | Format-List LastRunTime,LastTaskResult
+Test-Path Z:\使用说明.md
 ```
-然后 **重启一次电脑**，开机后不操作，确认 `Z:` 自动出现且为 32GB。
-- 出现 ✅ → 部署成功。
-- 没出现 ❌ → 多半是 Primo 那块没设成"非临时"或快速启动没关；守护脚本也会在开机后把
-  `STATUS.txt` 标 ERROR 并弹窗提醒你。
 
----
+当前运行验收：`STATUS.txt` 为 OK、`LastTaskResult` 为 0、根说明存在。启动恢复验收：下一次自然重启后，Z 自动出现、容量约 32 GiB，计划任务再次返回 0。
 
-## 5. 不同环境的适配点（可移植性）
+## 回退计划任务
 
-脚本已尽量自适配，无需改代码：
-- **仓库位置**：守护脚本用 `$PSScriptRoot` 自动定位，放哪个盘哪个目录都行。
-- **数据盘盘符**：自动取"仓库所在盘"，备份固定在 `<该盘>\Backups\Z_Drive_Backup`。
-- **内存盘盘符**：默认 `Z`，用 `deploy.ps1 -RamDrive X` 覆盖（写入 `ramdrive.txt`）。
-- **用户名**：计划任务用当前用户；Chrome junction 按当前用户路径自动找。
-- **Chrome**：部署时若 Chrome 开着会跳过 junction（提示你关掉重跑）。
-
----
-
-## 6. 卸载 / 回滚
+仅在明确不再使用本守护器时，以管理员身份运行：
 
 ```powershell
-# 删计划任务
 Unregister-ScheduledTask -TaskName RAMDisk_Code_Backup -Confirm:$false
-# 还原快速启动（如需要）
-Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name HiberbootEnabled -Value 1 -Type DWord
-# Chrome 缓存 junction 还原：关闭 Chrome 后删除 junction，让 Chrome 自己重建本地 Cache
-# (Default\Cache 是 junction，rmdir 它不会删到 Z 上的真实数据)
-# Primo 盘：在 Primo 界面删除即可
 ```
 
----
-
-## 7. 一句话清单（熟手版）
-
-```
-重装前: 确认 E:\Backups\Z_Drive_Backup 最新 + git push；镜像最好在 E 盘
-重装后: 装Primo+授权 → 建非临时32G盘(启用镜像) → clone仓库 → 管理员跑 deploy.ps1 → 重启验证Z自动回来
-```
+删除任务不会删除 Primo 盘或缓存。重启、删盘、改镜像和删除缓存属于独立动作，不由本回退自动执行。

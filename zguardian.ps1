@@ -1,227 +1,166 @@
 # =====================================================================
-#  Z: RamDisk Guardian   (portable - lives in the RamdiskGuardian repo)
-#  Run by Task "RAMDisk_Code_Backup" at logon + every 15 min,
-#  in the interactive session (highest privilege).
+#  Z: RamDisk Guardian (cache-only)
+#  Run by the legacy-named task "RAMDisk_Code_Backup" at logon and every
+#  15 minutes. The task name is retained for compatibility; no data backup
+#  or restore is performed.
 #
-#  PORTABLE PATHS (survives reinstall / new PC / moved repo):
-#    repo root = $PSScriptRoot ; data drive = drive of the repo ;
-#    backup = <dataDrive>\Backups\Z_Drive_Backup ; RAM letter = 'Z' or repo\ramdrive.txt
+#  Responsibilities:
+#    - wait for the RAM disk and report health
+#    - rebuild the bounded cache/scratch directory skeleton
+#    - restore the root usage guide from this repository
+#    - monitor RAM-disk space, host memory, and commit headroom
 #
-#  WHEN DOES IT PULL FROM BACKUP (heal/restore)?  -> only when needed:
-#    * marker  <Z>\.ramdisk_ready  MISSING  = disk is fresh / just dropped
-#      & recreated mid-session  -> restore.
-#    * FIRST run after a (re)boot = disk was just loaded from the Primo
-#      image, which may be STALE vs the backup -> heal.
-#    In both cases it pulls only files where the BACKUP is NEWER than the
-#    disk (robocopy /E /XO), so a stale image is corrected automatically.
-#    On every OTHER run it does NOT pull, so files you delete on Z are
-#    respected (not resurrected).
-#
-#  NEW USE IS CACHE-ONLY.  projects/docs/others are legacy compatibility
-#  channels: do not add new authoritative data there.  Their existing
-#  backup behavior remains append-only for safe recovery.
-#
-#  BACKUP (every run, append-only & newer-wins, robocopy /E /XO, no /PURGE):
-#    never deletes from the backup, never overwrites a newer backup file
-#    with an older disk file. A drop / stale image can NEVER shrink or
-#    downgrade the backup. (Deleted files linger in the backup by design.)
-#
-#  Health: logs\STATUS.txt (OK/WARN/ERROR) + guardian.log + alerts.log
-#          + one-shot msg.exe popup on WARN/ERROR.  ASCII-only on purpose.
+#  Health: logs\STATUS.txt + guardian.log + alerts.log
+#  ASCII-only source so Windows PowerShell has no source-encoding ambiguity.
 # =====================================================================
 $ErrorActionPreference = 'SilentlyContinue'
 
-# ---- portable locations -------------------------------------------------
-$root = $PSScriptRoot; if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
+$root = $PSScriptRoot
+if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $root) { $root = 'E:\Projects\Tools\RamdiskGuardian' }
-$logDir = Join-Path $root 'logs'
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-$log    = Join-Path $logDir 'guardian.log'
-$statusF= Join-Path $logDir 'STATUS.txt'
-$alertF = Join-Path $logDir 'alerts.log'
-$lastF  = Join-Path $logDir '.lasthealth'
-$bootF  = Join-Path $logDir '.lastboot'
 
-$dataDrive  = Split-Path $root -Qualifier            # e.g. 'E:'
-$backupRoot = Join-Path (Join-Path "$dataDrive\" 'Backups') 'Z_Drive_Backup'
-if (-not (Test-Path $backupRoot)) { New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null }
+$logDir = Join-Path $root 'logs'
+if (-not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$log = Join-Path $logDir 'guardian.log'
+$statusF = Join-Path $logDir 'STATUS.txt'
+$alertF = Join-Path $logDir 'alerts.log'
+$lastF = Join-Path $logDir '.lasthealth'
 
 $ramLetter = 'Z'
 $rdf = Join-Path $root 'ramdrive.txt'
-if (Test-Path $rdf) { $t = (Get-Content $rdf -EA SilentlyContinue | Select-Object -First 1); if ($t) { $ramLetter = $t.Trim() } }
+if (Test-Path -LiteralPath $rdf) {
+    $configuredLetter = Get-Content -LiteralPath $rdf -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($configuredLetter) { $ramLetter = $configuredLetter.Trim() }
+}
 $Z = "${ramLetter}:"
 $marker = "$Z\.ramdisk_ready"
-$names  = @('projects','docs','others')
 $cacheSoftLimitGB = 8
 $minimumAvailableMemoryGB = 8
 $minimumCommitHeadroomGB = 4
 
-function Log($m){ ("{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) | Out-File -FilePath $log -Append -Encoding utf8 }
-function Set-Health([string]$health,[string]$detail){
+function Log($message) {
+    ("{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $message) | Out-File -FilePath $log -Append -Encoding utf8
+}
+
+function Set-Health([string]$health, [string]$detail) {
     $line = "{0}  {1}  {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $health, $detail
-    Set-Content -Path $statusF -Value $line -Encoding utf8
-    $last = (Get-Content $lastF -EA SilentlyContinue | Select-Object -First 1)
+    Set-Content -LiteralPath $statusF -Value $line -Encoding utf8
+    $last = Get-Content -LiteralPath $lastF -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($health -ne 'OK' -and $health -ne $last) {
         $line | Out-File -FilePath $alertF -Append -Encoding utf8
         try { & "$env:WINDIR\System32\msg.exe" * "/TIME:60" "RamDisk($Z) $health - $detail" } catch {}
     }
-    Set-Content -Path $lastF -Value $health -Encoding utf8
+    Set-Content -LiteralPath $lastF -Value $health -Encoding utf8
     Log "health $health - $detail"
 }
-function NewestUtc($p){
-    if (-not (Test-Path $p)) { return [datetime]::MinValue }
-    $f = Get-ChildItem $p -Recurse -File -Force -EA SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-    if ($f) { return $f.LastWriteTimeUtc } else { return [datetime]::MinValue }
+
+if ((Test-Path -LiteralPath $log) -and ((Get-Item -LiteralPath $log).Length -gt 1MB)) {
+    Move-Item -LiteralPath $log -Destination "$log.1" -Force
 }
-function Assert-BackupDestinationSpace {
-    param(
-        [string]$DriveQualifier,
-        [string]$BackupRoot,
-        [double]$MinimumFreeGB = 10
-    )
+Log "--- guardian run (root=$root ram=$Z) ---"
 
-    try {
-        if (-not (Test-Path -LiteralPath $BackupRoot)) {
-            Set-Health 'ERROR' "backup destination $BackupRoot is not accessible. Aborting before robocopy."
-            exit 0
-        }
-
-        $driveName = $DriveQualifier.TrimEnd('\')
-        $di = [System.IO.DriveInfo]::new($driveName)
-        if (-not $di.IsReady) {
-            Set-Health 'ERROR' "backup destination drive $driveName is not ready. Aborting before robocopy."
-            exit 0
-        }
-
-        $freeGB = [math]::Round($di.AvailableFreeSpace / 1GB, 1)
-        if ($freeGB -lt $MinimumFreeGB) {
-            Set-Health 'ERROR' "backup destination $BackupRoot on $driveName has only $freeGB GB free (< $MinimumFreeGB GB). Aborting before robocopy."
-            exit 0
-        }
-
-        Log "backup destination space OK: $BackupRoot on $driveName has $freeGB GB free"
-    } catch {
-        Set-Health 'ERROR' "backup destination space check failed for $BackupRoot on ${DriveQualifier}: $($_.Exception.Message). Aborting before robocopy."
-        exit 0
-    }
-}
-
-if ((Test-Path $log) -and ((Get-Item $log).Length -gt 1MB)) { Move-Item $log "$log.1" -Force }
-Log "--- guardian run (root=$root data=$dataDrive ram=$Z) ---"
-Assert-BackupDestinationSpace -DriveQualifier $dataDrive -BackupRoot $backupRoot -MinimumFreeGB 10
-
-# detect "first run since this boot" (the boot-loaded image may be stale)
-$bootTicks = "0"
-try { $bootTicks = "$(((Get-CimInstance Win32_OperatingSystem).LastBootUpTime).ToUniversalTime().Ticks)" } catch {}
-$prevBoot  = (Get-Content $bootF -EA SilentlyContinue | Select-Object -First 1)
-$firstRunThisBoot = ($bootTicks -ne "0") -and ($bootTicks -ne "$prevBoot")
-if ($bootTicks -ne "0") { Set-Content -Path $bootF -Value $bootTicks -Encoding ascii }
-
-# wait up to 150s for the RAM disk to appear (Primo loads its image at boot)
 $deadline = (Get-Date).AddSeconds(150)
-while (-not (Test-Path "$Z\") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
-if (-not (Test-Path "$Z\")) {
+while (-not (Test-Path -LiteralPath "$Z\") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
+if (-not (Test-Path -LiteralPath "$Z\")) {
     Set-Health 'ERROR' "disk $Z is MISSING - check Primo / reboot"
     exit 0
 }
 
-# ensure legacy compatibility channels and the cache-first skeleton (idempotent)
 $dirs = @(
-    "$Z\projects", "$Z\docs", "$Z\others",
     "$Z\Caches", "$Z\Caches\Personal", "$Z\Caches\Work",
-    "$Z\Caches\ChromeCache", "$Z\Caches\ChromeCodeCache", "$Z\Caches\ChromeGPUCache", "$Z\Caches\360zip_temp",
+    "$Z\Caches\ChromeCache", "$Z\Caches\ChromeCodeCache", "$Z\Caches\ChromeGPUCache",
+    "$Z\Caches\360zip_temp", "$Z\Caches\WeFlow",
     "$Z\Scratch", "$Z\Scratch\Personal", "$Z\Scratch\Work",
     "$Z\TEMP"
 )
-foreach ($d in $dirs) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null; Log "mkdir $d" } }
-
-$markerMissing = -not (Test-Path $marker)
-$doHeal = $markerMissing -or $firstRunThisBoot   # pull newer-from-backup only in these cases
-if ($doHeal) { Log "HEAL pass (markerMissing=$markerMissing firstRunThisBoot=$firstRunThisBoot)" }
-
-foreach ($n in $names) {
-    $src = "$Z\$n"; $dst = Join-Path $backupRoot $n   # NB: never name a var $z (collides with $Z - PS is case-insensitive)
-    # 1) HEAL/RESTORE: pull files where the backup is NEWER than the disk
-    if ($doHeal) {
-        $sNew = NewestUtc $src; $dNew = NewestUtc $dst
-        if ($dNew -gt $sNew) {
-            Log "[HEAL] $dst -> $src (backup newer)"
-            robocopy $dst $src /E /XO /R:0 /W:0 /MT:16 *> $null
-        }
-    }
-    # 2) BACKUP: push live disk content -> backup (append-only, never downgrade/delete)
-    if ((@(Get-ChildItem $src -Recurse -File -Force)).Count -gt 0) {
-        if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
-        $rc = @($src, $dst, '/E', '/XO', '/R:0', '/W:0', '/MT:16')
-        if ($n -eq 'projects') { $rc += @('/XD','target','venv','.venv','.idea','target-eclipse','bin','build') }
-        Log "[SYNC] $src -> $dst"
-        robocopy @rc *> $null
-    } else {
-        Log "[SKIP backup] $src has no files - backup preserved"
+foreach ($dir in $dirs) {
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        Log "mkdir $dir"
     }
 }
 
-# (re)assert the ready marker
-if ($markerMissing) {
+$usageSource = Get-ChildItem -LiteralPath $root -Filter 'Z_*.md' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $usageSource) {
+    Set-Health 'ERROR' 'canonical root usage guide is missing from guardian repository'
+    exit 0
+}
+$usageTarget = Join-Path "$Z\" $usageSource.Name.Substring(2)
+$copyUsage = -not (Test-Path -LiteralPath $usageTarget)
+if (-not $copyUsage) {
+    try {
+        $copyUsage = (Get-FileHash -LiteralPath $usageSource.FullName -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $usageTarget -Algorithm SHA256).Hash
+    } catch {
+        $copyUsage = $true
+    }
+}
+if ($copyUsage) {
+    try {
+        Copy-Item -LiteralPath $usageSource.FullName -Destination $usageTarget -Force
+        Log "refreshed root usage guide: $usageTarget"
+    } catch {
+        Set-Health 'ERROR' "failed to refresh root usage guide: $($_.Exception.Message)"
+        exit 0
+    }
+}
+
+if (-not (Test-Path -LiteralPath $marker)) {
     New-Item -ItemType File -Path $marker -Force | Out-Null
-    try { (Get-Item $marker -Force).Attributes = 'Hidden' } catch {}
+    try { (Get-Item -LiteralPath $marker -Force).Attributes = 'Hidden' } catch {}
     Log 'marker written'
 }
 
-# health check: RAM-disk space plus host-memory pressure.
-# NB: Get-Volume on a Primo RAM disk intermittently returns nothing even
-# though the disk is fine (storage-provider hiccup; the filesystem is OK).
-# So retry, and fall back to .NET DriveInfo which reads free space straight
-# from the filesystem. Only WARN if every attempt truly fails.
 $free = $null
 $total = $null
 for ($i = 0; $i -lt 3 -and $null -eq $free; $i++) {
-    $vol = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
-    if ($vol -and $vol.SizeRemaining) {
-        $free = [math]::Round($vol.SizeRemaining/1GB, 1)
-        $total = [math]::Round($vol.Size/1GB, 1)
+    $volume = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
+    if ($volume -and $volume.SizeRemaining) {
+        $free = [math]::Round($volume.SizeRemaining / 1GB, 1)
+        $total = [math]::Round($volume.Size / 1GB, 1)
         break
     }
     try {
-        $di = New-Object System.IO.DriveInfo($ramLetter)
-        if ($di.IsReady) {
-            $free = [math]::Round($di.AvailableFreeSpace/1GB, 1)
-            $total = [math]::Round($di.TotalSize/1GB, 1)
+        $driveInfo = New-Object System.IO.DriveInfo($ramLetter)
+        if ($driveInfo.IsReady) {
+            $free = [math]::Round($driveInfo.AvailableFreeSpace / 1GB, 1)
+            $total = [math]::Round($driveInfo.TotalSize / 1GB, 1)
             break
         }
     } catch {}
     Start-Sleep -Milliseconds 500
 }
-if ($null -ne $free) {
-    $warnings = @()
-    $used = if ($null -ne $total) { [math]::Round($total - $free, 1) } else { $null }
-    if ($free -lt 2) { $warnings += "low RAM-disk space: $free GB free" }
-    if ($null -ne $used -and $used -gt $cacheSoftLimitGB) {
-        $warnings += "RAM-disk use $used GB exceeds $cacheSoftLimitGB GB cache soft limit"
-    }
 
-    $memoryDetail = 'host memory unavailable'
-    try {
-        $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
-        $availableMemoryGB = [math]::Round($memory.AvailableMBytes / 1024, 1)
-        $commitHeadroomGB = [math]::Round(($memory.CommitLimit - $memory.CommittedBytes) / 1GB, 1)
-        $memoryDetail = "host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB"
-        if ($availableMemoryGB -lt $minimumAvailableMemoryGB) {
-            $warnings += "host available memory $availableMemoryGB GB is below $minimumAvailableMemoryGB GB"
-        }
-        if ($commitHeadroomGB -lt $minimumCommitHeadroomGB) {
-            $warnings += "commit headroom $commitHeadroomGB GB is below $minimumCommitHeadroomGB GB"
-        }
-    } catch {
-        $warnings += 'host memory query failed'
-    }
-
-    $diskDetail = if ($null -ne $used) { "$Z present, $used GB used, $free GB free" } else { "$Z present, $free GB free" }
-    if ($warnings.Count -gt 0) {
-        Set-Health 'WARN' (($warnings -join '; ') + "; $diskDetail; $memoryDetail")
-    } else {
-        Set-Health 'OK' "$diskDetail; $memoryDetail"
-    }
-} else {
+if ($null -eq $free) {
     Set-Health 'WARN' "$Z present but volume query failed"
+    exit 0
+}
+
+$warnings = @()
+$used = if ($null -ne $total) { [math]::Round($total - $free, 1) } else { $null }
+if ($free -lt 2) { $warnings += "low RAM-disk space: $free GB free" }
+if ($null -ne $used -and $used -gt $cacheSoftLimitGB) {
+    $warnings += "RAM-disk use $used GB exceeds $cacheSoftLimitGB GB cache soft limit"
+}
+
+$memoryDetail = 'host memory unavailable'
+try {
+    $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
+    $availableMemoryGB = [math]::Round($memory.AvailableMBytes / 1024, 1)
+    $commitHeadroomGB = [math]::Round(($memory.CommitLimit - $memory.CommittedBytes) / 1GB, 1)
+    $memoryDetail = "host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB"
+    if ($availableMemoryGB -lt $minimumAvailableMemoryGB) {
+        $warnings += "host available memory $availableMemoryGB GB is below $minimumAvailableMemoryGB GB"
+    }
+    if ($commitHeadroomGB -lt $minimumCommitHeadroomGB) {
+        $warnings += "commit headroom $commitHeadroomGB GB is below $minimumCommitHeadroomGB GB"
+    }
+} catch {
+    $warnings += 'host memory query failed'
+}
+
+$diskDetail = if ($null -ne $used) { "$Z present, $used GB used, $free GB free" } else { "$Z present, $free GB free" }
+if ($warnings.Count -gt 0) {
+    Set-Health 'WARN' (($warnings -join '; ') + "; $diskDetail; $memoryDetail")
+} else {
+    Set-Health 'OK' "$diskDetail; $memoryDetail"
 }

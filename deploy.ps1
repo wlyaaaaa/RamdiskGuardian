@@ -9,9 +9,9 @@
 
   What this does (all idempotent / re-runnable):
     - disables Windows Fast Startup
-    - creates <dataDrive>\Backups\Z_Drive_Backup and .\logs
-    - registers Task "RAMDisk_Code_Backup" (logon + every N min)
-    - runs the guardian once (builds the cache-first Z: skeleton)
+    - creates .\logs
+    - registers the legacy-named Task "RAMDisk_Code_Backup" (logon + every N min)
+    - runs the guardian once (builds the cache-only Z: skeleton and root guide)
     - (re)creates the Chrome cache junction -> <Z>\Caches\ChromeCache
 
   Usage:
@@ -35,10 +35,8 @@ if (-not $me.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
 
 $repo = $PSScriptRoot
 if (-not (Test-Path (Join-Path $repo 'zguardian.ps1'))) { throw "zguardian.ps1 not found next to deploy.ps1 ($repo)." }
-$dataDrive = Split-Path $repo -Qualifier            # e.g. 'E:'
-$backup    = Join-Path (Join-Path "$dataDrive\" 'Backups') 'Z_Drive_Backup'
 $Z         = "${RamDrive}:"
-Say "repo=$repo  dataDrive=$dataDrive  ramDisk=$Z  user=$User  interval=${IntervalMinutes}m"
+Say "repo=$repo  ramDisk=$Z  user=$User  interval=${IntervalMinutes}m"
 
 # 1) record non-default RAM drive letter for the guardian
 if ($RamDrive -ne 'Z') { Set-Content (Join-Path $repo 'ramdrive.txt') -Value $RamDrive -Encoding ascii; Say "wrote ramdrive.txt = $RamDrive" }
@@ -49,8 +47,7 @@ Say 'Fast Startup disabled (HiberbootEnabled=0)'
 
 # 3) folders
 New-Item -ItemType Directory -Force (Join-Path $repo 'logs') | Out-Null
-New-Item -ItemType Directory -Force $backup | Out-Null
-Say "ensured: $repo\logs , $backup"
+Say "ensured: $repo\logs"
 
 # 4) scheduled task: logon + every N min, interactive session, highest, no overlap
 $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + (Join-Path $repo 'run_hidden.vbs') + '"')
@@ -70,7 +67,7 @@ if (-not (Test-Path "$Z\")) {
 }
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'zguardian.ps1')
-Say 'guardian ran (cache-first Z: skeleton built / legacy data restored if any)'
+Say 'guardian ran (cache-only Z: skeleton and root guide built)'
 
 # 6) Chrome Cache, Code Cache, and GPUCache junctions -> <Z>\Caches  (only if Chrome profile exists)
 $prof = "C:\Users\$User\AppData\Local\Google\Chrome\User Data\Default"
