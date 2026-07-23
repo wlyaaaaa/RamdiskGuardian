@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 )
 

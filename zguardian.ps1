@@ -9,6 +9,8 @@
 #    - rebuild the bounded cache/scratch directory skeleton
 #    - restore the root usage guide from this repository
 #    - monitor RAM-disk space, host memory, and commit headroom
+#    - watchdog for unaccounted host memory (stuck RAM-disk allocation)
+#    - emergency auto-release of a stuck RAM-disk driver allocation
 #
 #  Health: logs\STATUS.txt + guardian.log + alerts.log
 #  ASCII-only source so Windows PowerShell has no source-encoding ambiguity.
@@ -37,6 +39,10 @@ $marker = "$Z\.ramdisk_ready"
 $cacheSoftLimitGB = 8
 $minimumAvailableMemoryGB = 8
 $minimumCommitHeadroomGB = 4
+$emergencyAvailableMemoryGB = 5
+$stuckWarnGB = 4
+$stuckReleaseGB = 8
+$rxprd = 'C:\Program Files\Primo Ramdisk\rxprd.exe'
 
 function Log($message) {
     ("{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $message) | Out-File -FilePath $log -Append -Encoding utf8
@@ -110,25 +116,26 @@ if (-not (Test-Path -LiteralPath $marker)) {
     Log 'marker written'
 }
 
-$free = $null
-$total = $null
-for ($i = 0; $i -lt 3 -and $null -eq $free; $i++) {
-    $volume = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
-    if ($volume -and $volume.SizeRemaining) {
-        $free = [math]::Round($volume.SizeRemaining / 1GB, 1)
-        $total = [math]::Round($volume.Size / 1GB, 1)
-        break
-    }
-    try {
-        $driveInfo = New-Object System.IO.DriveInfo($ramLetter)
-        if ($driveInfo.IsReady) {
-            $free = [math]::Round($driveInfo.AvailableFreeSpace / 1GB, 1)
-            $total = [math]::Round($driveInfo.TotalSize / 1GB, 1)
-            break
+function Read-RamDiskSpace {
+    for ($i = 0; $i -lt 3; $i++) {
+        $volume = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
+        if ($volume -and $volume.SizeRemaining) {
+            return @([math]::Round($volume.SizeRemaining / 1GB, 1), [math]::Round($volume.Size / 1GB, 1))
         }
-    } catch {}
-    Start-Sleep -Milliseconds 500
+        try {
+            $driveInfo = New-Object System.IO.DriveInfo($ramLetter)
+            if ($driveInfo.IsReady) {
+                return @([math]::Round($driveInfo.AvailableFreeSpace / 1GB, 1), [math]::Round($driveInfo.TotalSize / 1GB, 1))
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    return @($null, $null)
 }
+
+$space = Read-RamDiskSpace
+$free = $space[0]
+$total = $space[1]
 
 if ($null -eq $free) {
     Set-Health 'WARN' "$Z present but volume query failed"
@@ -143,10 +150,85 @@ if ($null -ne $used -and $used -gt $cacheSoftLimitGB) {
 }
 
 $memoryDetail = 'host memory unavailable'
+$availableMemoryGB = $null
+$commitHeadroomGB = $null
 try {
     $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
     $availableMemoryGB = [math]::Round($memory.AvailableMBytes / 1024, 1)
     $commitHeadroomGB = [math]::Round(($memory.CommitLimit - $memory.CommittedBytes) / 1GB, 1)
+} catch {
+    $warnings += 'host memory query failed'
+}
+
+# Unaccounted-memory watchdog: physical memory in use that belongs to no
+# process, pool, cache or modified list. A RAM-disk driver allocation stuck
+# at its high-water mark shows up here and nowhere else (incident
+# 2026-07-23). Healthy baseline measured 2026-07-23 is about -4 GB because
+# the _Total working-set counter double-counts shared pages; thresholds are
+# set well above that noise floor.
+$unaccountedGB = $null
+function Read-UnaccountedGB {
+    try {
+        $c = Get-Counter '\Memory\Available Bytes','\Memory\Modified Page List Bytes','\Memory\Cache Bytes','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Process(_Total)\Working Set' -ErrorAction Stop
+        $avail = 0; $mod = 0; $cache = 0; $paged = 0; $nonpaged = 0; $ws = 0
+        foreach ($s in $c.CounterSamples) {
+            if ($s.Path -match 'available bytes$') { $avail = $s.CookedValue }
+            elseif ($s.Path -match 'modified page list bytes$') { $mod = $s.CookedValue }
+            elseif ($s.Path -match 'cache bytes$') { $cache = $s.CookedValue }
+            elseif ($s.Path -match 'pool paged bytes$') { $paged = $s.CookedValue }
+            elseif ($s.Path -match 'pool nonpaged bytes$') { $nonpaged = $s.CookedValue }
+            elseif ($s.Path -match 'working set$') { $ws = $s.CookedValue }
+        }
+        $totalBytes = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).TotalVisibleMemorySize * 1KB
+        $inUse = $totalBytes - $avail
+        return [math]::Round(($inUse - ($ws + $paged + $nonpaged + $cache + $mod)) / 1GB, 1)
+    } catch {
+        return $null
+    }
+}
+$unaccountedGB = Read-UnaccountedGB
+
+# Emergency auto-release: if the host is starving, or the watchdog sees a
+# large unaccounted block, while the cache disk holds little data, the
+# RAM-disk driver allocation map is stuck (DMM release failure). Wiping the
+# cache-only disk returns all driver-held memory; content loss is harmless
+# by contract and the skeleton plus usage guide are rebuilt below.
+$releaseReason = $null
+if ($null -ne $availableMemoryGB -and $null -ne $used -and
+    $availableMemoryGB -lt $emergencyAvailableMemoryGB -and $used -le $cacheSoftLimitGB) {
+    $releaseReason = "host available $availableMemoryGB GB < $emergencyAvailableMemoryGB GB"
+} elseif ($null -ne $unaccountedGB -and $null -ne $used -and
+    $unaccountedGB -ge $stuckReleaseGB -and $used -le $cacheSoftLimitGB) {
+    $releaseReason = "unaccounted host memory $unaccountedGB GB >= $stuckReleaseGB GB (stuck RAM-disk allocation)"
+}
+
+if ($releaseReason) {
+    Log "EMERGENCY release: $releaseReason with $Z use $used GB <= $cacheSoftLimitGB GB - reinitializing RAM disk"
+    & $rxprd init 0 -s | Out-Null
+    Start-Sleep -Seconds 2
+    & $rxprd save 0 -s | Out-Null
+    foreach ($dir in $dirs) {
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    }
+    try { Copy-Item -LiteralPath $usageSource.FullName -Destination $usageTarget -Force } catch {}
+    New-Item -ItemType File -Path $marker -Force | Out-Null
+    $space = Read-RamDiskSpace
+    if ($null -ne $space[0]) {
+        $free = $space[0]
+        $total = $space[1]
+        $used = if ($null -ne $total) { [math]::Round($total - $free, 1) } else { $null }
+    }
+    try {
+        $memory = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
+        $availableMemoryGB = [math]::Round($memory.AvailableMBytes / 1024, 1)
+        $commitHeadroomGB = [math]::Round(($memory.CommitLimit - $memory.CommittedBytes) / 1GB, 1)
+    } catch {}
+    $unaccountedGB = Read-UnaccountedGB
+    Log "EMERGENCY release done: host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB, unaccounted $unaccountedGB GB, $Z use $used GB"
+    $warnings += "RAM disk was auto-reinitialized to release stuck driver memory ($releaseReason)"
+}
+
+if ($null -ne $availableMemoryGB) {
     $memoryDetail = "host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB"
     if ($availableMemoryGB -lt $minimumAvailableMemoryGB) {
         $warnings += "host available memory $availableMemoryGB GB is below $minimumAvailableMemoryGB GB"
@@ -154,8 +236,12 @@ try {
     if ($commitHeadroomGB -lt $minimumCommitHeadroomGB) {
         $warnings += "commit headroom $commitHeadroomGB GB is below $minimumCommitHeadroomGB GB"
     }
-} catch {
-    $warnings += 'host memory query failed'
+}
+if ($null -ne $unaccountedGB) {
+    $memoryDetail = "$memoryDetail, unaccounted $unaccountedGB GB"
+    if (-not $releaseReason -and $unaccountedGB -ge $stuckWarnGB) {
+        $warnings += "unaccounted host memory $unaccountedGB GB exceeds $stuckWarnGB GB (healthy baseline about -4 GB; possible stuck RAM-disk allocation)"
+    }
 }
 
 $diskDetail = if ($null -ne $used) { "$Z present, $used GB used, $free GB free" } else { "$Z present, $free GB free" }
