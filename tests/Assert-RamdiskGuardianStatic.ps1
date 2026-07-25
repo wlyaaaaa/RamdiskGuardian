@@ -69,6 +69,14 @@ Assert-Text 'root usage guide reserves Z for cache and scratch only' (
     $usageText -match '不要.*Git.*仓库'
 )
 
+Assert-Text 'cache producers own bounded lifecycle cleanup' (
+    $usageText -match '缓存生产者' -and
+    $usageText -match '成功、失败或接管收口' -and
+    $usageText -match '不.*整盘.*定时清空' -and
+    $readmeText -match '缓存生产者' -and
+    $readmeText -match '成功、失败或接管收口'
+)
+
 Assert-Text 'host memory and cache soft-limit health checks are present' (
     $guardianText -match 'Win32_PerfFormattedData_PerfOS_Memory' -and
     $guardianText -match '\$cacheSoftLimitGB\s*=\s*8' -and
