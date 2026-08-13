@@ -52,7 +52,9 @@ function Set-Health([string]$health, [string]$detail) {
     $line = "{0}  {1}  {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $health, $detail
     Set-Content -LiteralPath $statusF -Value $line -Encoding utf8
     $last = Get-Content -LiteralPath $lastF -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($health -ne 'OK' -and $health -ne $last) {
+    # WARN remains recorded for health inspection, but is intentionally silent.
+    # Only an ERROR transition should interrupt the interactive user session.
+    if ($health -eq 'ERROR' -and $health -ne $last) {
         $line | Out-File -FilePath $alertF -Append -Encoding utf8
         try { & "$env:WINDIR\System32\msg.exe" * "/TIME:60" "RamDisk($Z) $health - $detail" } catch {}
     }

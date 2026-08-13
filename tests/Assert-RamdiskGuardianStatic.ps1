@@ -84,6 +84,11 @@ Assert-Text 'host memory and cache soft-limit health checks are present' (
     $guardianText -match '\$minimumCommitHeadroomGB\s*=\s*4'
 )
 
+Assert-Text 'WARN health is logged without an interactive notification' (
+    $guardianText -match 'if \(\$health -eq ''ERROR'' -and \$health -ne \$last\)' -and
+    $readmeText -match '仅 ERROR 状态变化弹一次消息，WARN 保持静默'
+)
+
 Assert-Text 'README makes new Z usage cache-only and points to PCConfig policy' (
     $readmeText -match 'cache-only' -and
     $readmeText -match 'dev_storage_policy\.md'
