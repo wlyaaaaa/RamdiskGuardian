@@ -84,6 +84,20 @@ Assert-Text 'host memory and cache soft-limit health checks are present' (
     $guardianText -match '\$minimumCommitHeadroomGB\s*=\s*4'
 )
 
+Assert-Text 'guardian validates the configured drive and RAMDISK identity before writing to it' (
+    $guardianText.Contains('invalid ramdrive.txt value; expected a single drive letter') -and
+    $guardianText.Contains("[string]::Equals(`$ramVolumeLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)") -and
+    $guardianText.IndexOf("[string]::Equals(`$ramVolumeLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)", [StringComparison]::Ordinal) -lt
+        $guardianText.IndexOf('$dirs = @(', [StringComparison]::Ordinal)
+)
+
+Assert-Text 'deployer normalizes one-letter drive input and clears a stale custom override when returning to Z' (
+    $deployText.Contains("[ValidatePattern('^[A-Za-z]$')]") -and
+    $deployText.Contains('$RamDrive = $RamDrive.ToUpperInvariant()') -and
+    $deployText.Contains("[string]::Equals([string]`$ramVolume.FileSystemLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)") -and
+    $deployText.Contains('Remove-Item -LiteralPath $ramDriveConfig -Force')
+)
+
 Assert-Text 'WARN health is logged without an interactive notification' (
     $guardianText -match 'if \(\$health -eq ''ERROR'' -and \$health -ne \$last\)' -and
     $readmeText -match '仅 ERROR 状态变化弹一次消息，WARN 保持静默'

@@ -19,11 +19,13 @@
     powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -RamDrive R -IntervalMinutes 10
 #>
 param(
+    [ValidatePattern('^[A-Za-z]$')]
     [string]$RamDrive        = 'Z',
     [string]$User            = $env:USERNAME,
     [int]   $IntervalMinutes = 15
 )
 $ErrorActionPreference = 'Stop'
+$RamDrive = $RamDrive.ToUpperInvariant()
 function Say($m){ Write-Host ("[deploy] " + $m) }
 function Warn($m){ Write-Host ("[deploy] WARNING: " + $m) -ForegroundColor Yellow }
 
@@ -38,8 +40,24 @@ if (-not (Test-Path (Join-Path $repo 'zguardian.ps1'))) { throw "zguardian.ps1 n
 $Z         = "${RamDrive}:"
 Say "repo=$repo  ramDisk=$Z  user=$User  interval=${IntervalMinutes}m"
 
+# Refuse to deploy against an existing volume unless it is the RAM disk
+# defined by this product's setup contract.
+if (Test-Path -LiteralPath "$Z\") {
+    $ramVolume = Get-Volume -DriveLetter $RamDrive -ErrorAction Stop
+    if (-not [string]::Equals([string]$ramVolume.FileSystemLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to deploy against $Z because its volume label is not RAMDISK."
+    }
+}
+
 # 1) record non-default RAM drive letter for the guardian
-if ($RamDrive -ne 'Z') { Set-Content (Join-Path $repo 'ramdrive.txt') -Value $RamDrive -Encoding ascii; Say "wrote ramdrive.txt = $RamDrive" }
+$ramDriveConfig = Join-Path $repo 'ramdrive.txt'
+if ($RamDrive -ne 'Z') {
+    Set-Content -LiteralPath $ramDriveConfig -Value $RamDrive -Encoding ascii
+    Say "wrote ramdrive.txt = $RamDrive"
+} elseif (Test-Path -LiteralPath $ramDriveConfig) {
+    Remove-Item -LiteralPath $ramDriveConfig -Force
+    Say 'removed stale ramdrive.txt; guardian will use Z'
+}
 
 # 2) disable Windows Fast Startup (clean cold boot -> reliable Primo recreate)
 Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name HiberbootEnabled -Value 0 -Type DWord

@@ -29,10 +29,18 @@ $alertF = Join-Path $logDir 'alerts.log'
 $lastF = Join-Path $logDir '.lasthealth'
 
 $ramLetter = 'Z'
+$ramConfigError = $null
 $rdf = Join-Path $root 'ramdrive.txt'
 if (Test-Path -LiteralPath $rdf) {
     $configuredLetter = Get-Content -LiteralPath $rdf -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($configuredLetter) { $ramLetter = $configuredLetter.Trim() }
+    if ($configuredLetter) {
+        $candidateLetter = $configuredLetter.Trim()
+        if ($candidateLetter -match '^[A-Za-z]$') {
+            $ramLetter = $candidateLetter.ToUpperInvariant()
+        } else {
+            $ramConfigError = 'invalid ramdrive.txt value; expected a single drive letter'
+        }
+    }
 }
 $Z = "${ramLetter}:"
 $marker = "$Z\.ramdisk_ready"
@@ -67,10 +75,22 @@ if ((Test-Path -LiteralPath $log) -and ((Get-Item -LiteralPath $log).Length -gt 
 }
 Log "--- guardian run (root=$root ram=$Z) ---"
 
+if ($ramConfigError) {
+    Set-Health 'ERROR' $ramConfigError
+    exit 0
+}
+
 $deadline = (Get-Date).AddSeconds(150)
 while (-not (Test-Path -LiteralPath "$Z\") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
 if (-not (Test-Path -LiteralPath "$Z\")) {
     Set-Health 'ERROR' "disk $Z is MISSING - check Primo / reboot"
+    exit 0
+}
+
+$ramVolume = Get-Volume -DriveLetter $ramLetter -ErrorAction SilentlyContinue
+$ramVolumeLabel = if ($ramVolume) { [string]$ramVolume.FileSystemLabel } else { '<unavailable>' }
+if (-not $ramVolume -or -not [string]::Equals($ramVolumeLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)) {
+    Set-Health 'ERROR' "refusing $Z because volume label is '$ramVolumeLabel'; expected RAMDISK"
     exit 0
 }
 
