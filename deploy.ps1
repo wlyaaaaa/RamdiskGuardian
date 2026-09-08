@@ -85,7 +85,8 @@ if (-not (Test-Path "$Z\")) {
 }
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'zguardian.ps1')
-Say 'guardian ran (cache-only Z: skeleton and root guide built)'
+if ($LASTEXITCODE -ne 0) { throw "Guardian failed (exit $LASTEXITCODE). Read logs\STATUS.txt before continuing deployment." }
+Say 'guardian completed; inspect logs\STATUS.txt for health and resource warnings'
 
 # 6) Chrome Cache, Code Cache, and GPUCache junctions -> <Z>\Caches  (only if Chrome profile exists)
 $prof = "C:\Users\$User\AppData\Local\Google\Chrome\User Data\Default"
@@ -131,5 +132,5 @@ if (Test-Path $prof) {
 # 7) 360 zip - manual (its ini is UTF-16 and fiddly to patch safely)
 Say "360 Zip: in 360 settings set Extract-temp-dir to  $Z\Caches\360zip_temp  (already created)"
 
-Say 'DONE. Now REBOOT once and confirm Z: comes back automatically (32GB).'
+Say 'DONE. At the next natural reboot, confirm Z: comes back automatically (12 GiB).'
 Say ("Health any time:  Get-Content " + (Join-Path $repo 'logs\STATUS.txt'))

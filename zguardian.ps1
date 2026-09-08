@@ -210,6 +210,35 @@ function Read-UnaccountedGB {
 }
 $unaccountedGB = Read-UnaccountedGB
 
+function Invoke-PrimoCommand([string[]]$Arguments) {
+    $ErrorActionPreference = 'Stop'
+    $output = & $rxprd @Arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Primo $($Arguments[0]) failed (exit $LASTEXITCODE): $($output -join ' ')"
+    }
+    return $output
+}
+
+function Resolve-PrimoDiskIndex {
+    $listing = Invoke-PrimoCommand @('ls')
+    $matchesForDrive = @()
+    foreach ($line in $listing) {
+        if ([string]$line -match '^\s*#(\d+)\s+(.+)$') {
+            $index = [int]$Matches[1]
+            $volumes = @([regex]::Matches($Matches[2], '(?i)(?<![A-Z0-9])([A-Z]):(?:\\)?(?=\s|$)') |
+                ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() })
+            if ($volumes -contains $ramLetter) {
+                if ($volumes.Count -ne 1) { throw "Primo disk #$index contains additional volumes; refusing recovery of $Z" }
+                $matchesForDrive += $index
+            }
+        }
+    }
+    if ($matchesForDrive.Count -ne 1) {
+        throw "Primo listing does not identify exactly one disk for $Z"
+    }
+    return $matchesForDrive[0]
+}
+
 # Emergency auto-release: if the host is starving, or the watchdog sees a
 # large unaccounted block, while the cache disk holds little data, the
 # RAM-disk driver allocation map is stuck (DMM release failure). Wiping the
@@ -225,15 +254,22 @@ if ($null -ne $availableMemoryGB -and $null -ne $used -and
 }
 
 if ($releaseReason) {
-    Log "EMERGENCY release: $releaseReason with $Z use $used GB <= $cacheSoftLimitGB GB - reinitializing RAM disk"
-    & $rxprd init 0 -s | Out-Null
-    Start-Sleep -Seconds 2
-    & $rxprd save 0 -s | Out-Null
-    foreach ($dir in $dirs) {
-        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    try {
+        $diskIndex = Resolve-PrimoDiskIndex
+        Log "EMERGENCY release: $releaseReason with $Z use $used GB <= $cacheSoftLimitGB GB - reinitializing Primo disk #$diskIndex"
+        Invoke-PrimoCommand @('init', [string]$diskIndex, '-s') | Out-Null
+        Start-Sleep -Seconds 2
+        foreach ($dir in $dirs) {
+            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null }
+        }
+        Copy-Item -LiteralPath $usageSource.FullName -Destination $usageTarget -Force -ErrorAction Stop
+        New-Item -ItemType File -Path $marker -Force -ErrorAction Stop | Out-Null
+        (Get-Item -LiteralPath $marker -Force -ErrorAction Stop).Attributes = 'Hidden'
+        Invoke-PrimoCommand @('save', [string]$diskIndex, '-s') | Out-Null
+    } catch {
+        Set-Health 'ERROR' "RAM disk recovery failed: $($_.Exception.Message)"
+        exit 1
     }
-    try { Copy-Item -LiteralPath $usageSource.FullName -Destination $usageTarget -Force } catch {}
-    New-Item -ItemType File -Path $marker -Force | Out-Null
     $space = Read-RamDiskSpace
     if ($null -ne $space[0]) {
         $free = $space[0]

@@ -2,7 +2,7 @@
 
 本仓库维护这台机器的 12 GiB 动态 RAM Disk。Z 的当前合同是 **cache-only**：只放丢失后可自动重建的缓存和 scratch，不承载正式项目、唯一数据或备份。机器级放置策略以 `E:\PCConfig\docs\governance\dev_storage_policy.md` 为权威。
 
-最后更新：2026-07-23。
+最后更新：2026-09-08。
 
 ## 当前职责
 
@@ -17,6 +17,8 @@
 - 宿主可用内存低于 5 GiB 且 Z 占用不超过 8 GiB 软上限时，自动重建内存盘释放卡住的驱动占用（紧急自愈，cache-only 保证无数据损失）；
 - 无主之页看门狗：估算宿主不可归属内存（健康基线约 -4 GiB），达到 4 GiB 先告警，达到 8 GiB 且 Z 占用不超软上限时自动重建，覆盖未触发内存危急线的慢性卡占；
 - 状态变化为 WARN/ERROR 时写日志；仅 ERROR 状态变化弹一次消息，WARN 保持静默。
+
+紧急重建先从 Primo 当前列表解析实际盘符对应的唯一磁盘编号，再检查初始化、目录/说明恢复和镜像保存的结果；失败会记录 ERROR、返回非零，不会把失败写成“已完成”。盘符不明确或同一 Primo 盘还有其他分区时不重建。重建会使可再生成缓存失效，活动应用可能需要重新加载；cache-only 约束只保证没有唯一数据损失，不等于运行零打扰。
 
 历史 `projects/docs/others` 通道及其追加式备份逻辑已在确认盘内和旧备份均为空后退役。守护器不再创建这些目录，也不依赖 `E:\Backups\Z_Drive_Backup`。
 
@@ -83,7 +85,7 @@ Get-ScheduledTask RAMDisk_Code_Backup | Format-List TaskName,State
 Get-ScheduledTaskInfo RAMDisk_Code_Backup | Format-List LastRunTime,LastTaskResult
 ```
 
-`STATUS.txt` 中 `OK` 表示本轮成功；Windows 计划任务 `LastTaskResult = 0` 表示任务成功。Z 不存在时守护器等待最多 150 秒，随后记录 ERROR。
+`STATUS.txt` 中 `OK` 表示本轮没有资源警告；`WARN` 表示达到资源提醒阈值。Windows 计划任务 `LastTaskResult = 0` 只证明脚本结束，须与健康状态一起看。紧急重建失败返回非零；Z 不存在时守护器等待最多 150 秒，随后记录 ERROR。
 
 ## 文件清单
 
@@ -96,6 +98,7 @@ RamdiskGuardian/
 ├─ zguardian.ps1
 ├─ run_hidden.vbs
 ├─ tests/Assert-RamdiskGuardianStatic.ps1
+├─ tests/Test-RamdiskGuardianRecovery.ps1
 ├─ archive/sync_code.bat.bak_20260614
 └─ logs/                         运行态，不入库
 ```
