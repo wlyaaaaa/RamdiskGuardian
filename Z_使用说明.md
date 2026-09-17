@@ -37,3 +37,9 @@ Z 中内容随重启、掉盘或镜像变化而消失是正常设计。缓存总
 计划任务仍叫 `RAMDisk_Code_Backup`，这是为兼容保留的旧名字，不表示当前会备份数据。
 
 机器级权威：`E:\PCConfig\docs\governance\dev_storage_policy.md`。
+
+## 自动重建的控制
+
+自动重建需至少 10 秒内 3 个连续压力样本，并受真实消费者租约、用户暂停和冷却期约束。尝试间隔至少 1 小时；无法证明内存改善时暂缓 6 小时。cache-only 不意味着活动任务可以无影响地被中断，长任务应通过本项目 `Use-RamdiskCacheLease.ps1` 登记真实 PID 与期限。
+
+通过本机“RAMDisk 与远程串流维护”窗口查看新鲜健康状态、暂停自动重建或停止守护。暂停自动重建仍保留目录维护与健康检查；关闭窗口不停止既有守护。只读入口为 RamdiskGuardian 的 `Get-RamdiskHealth.ps1 -Json`。

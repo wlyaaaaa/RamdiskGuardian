@@ -36,13 +36,25 @@ exit 2
 '@
 $runner = @'
 param([string]$CaseRoot)
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
 $fixture = Get-Content -LiteralPath (Join-Path $CaseRoot 'fixture.json') -Raw | ConvertFrom-Json
 $rxprd = Join-Path $CaseRoot 'primo.cmd'
 if ($fixture.MissingExecutable) { $rxprd = Join-Path $CaseRoot 'missing-primo.exe' }
 $ramLetter = $fixture.Drive
 $Z = "${ramLetter}:"
 $releaseReason = 'isolated threshold fixture'
+$logDir=$CaseRoot
+$recoveryStatePath=Join-Path $CaseRoot 'recovery-state.json'
+$recoveryState=@{LastAttemptUtc=$null;LastOutcome='none';SuppressUntilUtc=$null}
+$decision=[pscustomobject]@{Reason='isolated threshold fixture'}
+$beforeAvailableMemoryGB=4;$beforeUnaccountedGB=0
+$verifiedPrimoIndex=if($ramLetter -eq 'R'){2}else{0}
+$ramVolume=[pscustomobject]@{UniqueId='isolated-test-volume';FileSystemLabel='RAMDISK'}
+function Get-Volume { $ramVolume }
+function Get-RamdiskLeaseState { [pscustomobject]@{Active=0;Unknown=0} }
+function Read-RamdiskJson { @{Paused=$false} }
+function Write-RamdiskJson { param($Path,$Value) $Value|ConvertTo-Json|Set-Content -LiteralPath $Path }
+function Get-RamdiskRecoveryBenefit { [pscustomobject]@{State='effective'} }
 $cacheSoftLimitGB = 8
 $used = 1
 $free = 11
@@ -101,7 +113,7 @@ try {
         }
         $fixture | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $caseRoot 'fixture.json') -Encoding utf8
         Set-Content -LiteralPath (Join-Path $caseRoot 'primo-implementation.ps1') -Value $fakePrimo -Encoding utf8
-        $nativeStub = '@echo off' + "`r`n" + '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0primo-implementation.ps1" %*' + "`r`n" + 'exit /b %errorlevel%'
+        $nativeStub = '@echo off' + "`r`n" + '"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0primo-implementation.ps1" %*' + "`r`n" + 'exit /b %errorlevel%'
         Set-Content -LiteralPath (Join-Path $caseRoot 'primo.cmd') -Value $nativeStub -Encoding ascii
         Set-Content -LiteralPath (Join-Path $caseRoot 'runner.ps1') -Value $runner -Encoding utf8
         Set-Content -LiteralPath (Join-Path $caseRoot 'production-functions.ps1') -Value $functions -Encoding utf8

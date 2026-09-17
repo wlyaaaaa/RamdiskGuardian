@@ -1,59 +1,53 @@
 # RamdiskGuardian 部署 / 恢复
 
-适用于系统重装、换电脑或计划任务丢失。Z 是 cache-only RAM Disk，不需要搬运缓存或旧备份。
+Z 是 cache-only RAM Disk；恢复守护不需要迁回旧缓存，也不恢复退役的数据备份通道。使用管理员 PowerShell 7。先在普通权限下预检，执行时再按实际权限要求提升。
 
-## 前置配置
+## Primo 前置配置
 
-在 Primo Ramdisk 中创建：
+在 Primo 中创建非临时盘：Z、NTFS、12 GiB、卷标 RAMDISK、动态内存和紧凑模式，启用镜像。当前机器登记的镜像路径为 `E:\RamdiskImage\Z.vdf`。部署脚本不代替 Primo 建盘。`docs/primo_setup.png` 仅展示界面布局，旧容量不代表当前配置。
 
-- 盘符 `Z:`；
-- NTFS、12 GiB、卷标 `RAMDISK`；
-- 动态内存和紧凑模式；
-- 非临时盘；
-- 镜像启用，路径 `E:\RamdiskImage\Z.vdf`。
-
-本仓库的部署脚本不代替 Primo 建盘；界面布局可参考 `docs/primo_setup.png`，其中旧容量不作为当前配置。当前容量固定为 12 GiB。
-
-## 部署
-
-在管理员 PowerShell 中运行：
+## 先查看计划
 
 ```powershell
 Set-Location E:\Projects\Tools\RamdiskGuardian
-.\deploy.ps1
+.\deploy.ps1 -Json
 ```
 
-脚本会：
+默认不写任务、不改注册表、不迁移 Chrome 缓存。实际任务必须属于真实交互式用户；SYSTEM 维护通道不能被误当成用户。已有任务可解析原用户；首次恢复时使用 `-User '<实际交互式账户>'`。
 
-1. 关闭 Windows 快速启动；
-2. 建立仓库 `logs`；
-3. 注册兼容名称 `RAMDisk_Code_Backup` 的计划任务（登录 + 每 15 分钟）；
-4. 运行一次守护器，建立 cache-only 骨架和 `Z:\使用说明.md`；
-5. 在 Chrome 已关闭时，重建 Cache / Code Cache / GPUCache junction；
-6. 提示把 360 压缩临时目录设为 `Z:\Caches\360zip_temp`。
+## 选择精确的部署范围
 
-任务名保留旧名称是为了避免不必要的任务注册、监控和恢复引用漂移；它不再执行数据备份。
-
-## 验收
+只恢复或升级任务，不改电源与缓存：
 
 ```powershell
-Get-Content E:\Projects\Tools\RamdiskGuardian\logs\STATUS.txt
-Get-ScheduledTaskInfo RAMDisk_Code_Backup | Format-List LastRunTime,LastTaskResult
-Test-Path Z:\使用说明.md
+.\deploy.ps1 -TaskOnly -Apply -Json
 ```
 
-当前运行验收需要同时看状态与任务结果：`STATUS.txt` 为 OK 表示本轮无资源警告；WARN 表示盘仍在工作但空间或内存达到提醒阈值，保持静默，不等于任务失败。`LastTaskResult` 为 0 仅表示脚本执行结束，不能单独证明健康。根说明与缓存目录应存在。
-
-紧急重建前，守护器会从 Primo 当前列表查找配置盘符对应的唯一磁盘编号，避免把自定义盘符错误地重建为 0 号盘。初始化、恢复目录/说明或保存镜像失败时记录 ERROR 并返回非零，不继续报告重建完成。重建会丢弃可再生成缓存，活动应用可能需要重新加载；不得把唯一数据放进去。
-
-启动恢复验收留到下一次自然重启：确认 Z 自动出现、容量约 12 GiB，并复核计划任务结果和最新健康记录；当前挂载、代码测试或一次手动运行都不能替代它。
-
-## 回退计划任务
-
-仅在明确不再使用本守护器时，以管理员身份运行：
+完整部署、核对盘符、运行无重建的初始化：
 
 ```powershell
-Unregister-ScheduledTask -TaskName RAMDisk_Code_Backup -Confirm:$false
+.\deploy.ps1 -Apply -Json
 ```
 
-删除任务不会删除 Primo 盘或缓存。重启、删盘、改镜像和删除缓存属于独立动作，不由本回退自动执行。
+需要修改 Windows 快速启动时显式加 `-DisableFastStartup`；需要迁移 Chrome 默认配置的 Cache、Code Cache、GPUCache 时显式加 `-WireChromeCaches`。两者不能与 `-TaskOnly` 混用。Chrome 运行时缓存迁移会延后，不强制结束浏览器。旧目录或链接先改名保留，再建立和回读 junction，不递归删除用户目录。
+
+非默认盘符使用 `-RamDrive R`；从自定义盘符返回 Z 会移除旧覆盖配置。`-IntervalMinutes` 范围 1–1440，默认 15。调度由登录触发和独立的周期触发组成，部署后无需等待下次登录才有下一次周期检查。
+
+360 压缩仍由用户在其设置中选择对应盘的 `Caches\360zip_temp`；部署不盲改其配置编码。任务名 `RAMDisk_Code_Backup` 仅为兼容保留，不执行数据备份。
+
+## 回读与回滚
+
+部署把原任务 XML、盘符覆盖、电源原值及缓存目录改名记录保存在本项目 `logs\deploy-*`，输出精确恢复路径；发生安装阶段错误时按修改逆序尝试恢复，并报告恢复失败。已安装任务后若初始化失败，会重新取得守护互斥锁并执行同一回滚路径；锁不可用时明确保留恢复材料并报告未完成，不以任务存在冒充成功。
+
+```powershell
+.\Get-RamdiskHealth.ps1 -Json
+Get-ScheduledTaskInfo -TaskName RAMDisk_Code_Backup
+```
+
+同时检查任务启用、下一次执行、观察新鲜度、源码版本、卷健康、目录与根说明。OK 表示本轮无资源提醒；WARN 表示有明确资源压力或恢复延后；ERROR 必须非零退出。只有退出码为 0 不足以证明健康。
+
+恢复任务不重启机器、不重新初始化真实内存盘。下一次自然重启后，再确认 Z 自动出现且容量约 12 GiB，任务和健康记录随之更新。当前挂载、测试或手动初始化不能替代启动恢复验收。
+
+## 暂停与停止
+
+日常通过“RAMDisk 与远程串流维护”窗口分别暂停自动重建或停止整个守护。暂停自动重建不停止目录维护，恢复不清空冷却。停止守护不卸载 Primo、不删除盘和缓存。需要彻底卸载守护任务时，独立明确执行 `Unregister-ScheduledTask`；这也不会删除实际 RAMDisk 或镜像。

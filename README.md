@@ -1,106 +1,66 @@
-# RamdiskGuardian — Z: 有界热缓存守护
+# RamdiskGuardian
 
-本仓库维护这台机器的 12 GiB 动态 RAM Disk。Z 的当前合同是 **cache-only**：只放丢失后可自动重建的缓存和 scratch，不承载正式项目、唯一数据或备份。机器级放置策略以 `E:\PCConfig\docs\governance\dev_storage_policy.md` 为权威。
+维护 cache-only RAM Disk 的目录骨架、根使用说明、空间与宿主内存健康，并在持续压力且允许恢复时执行有界的 Primo 重建。它不备份数据，不把 Z 当源码盘，也不自动清理其它程序的未知缓存。
 
-最后更新：2026-09-08。
+## 日常使用
 
-## 当前职责
-
-调用链：计划任务 `RAMDisk_Code_Backup` → `run_hidden.vbs` → `zguardian.ps1`。任务在登录时及以后每 15 分钟运行。
-
-任务名是历史兼容名称；当前守护器不执行备份或恢复，只负责：
-
-- 等待 Z 出现并记录健康；
-- 自恢复 `Caches/Personal`、`Caches/Work`、`Scratch/Personal`、`Scratch/Work`、`TEMP` 及现有应用缓存目录；
-- 把仓库内 `Z_使用说明.md` 同步为 `Z:\使用说明.md`；
-- 监控 Z 占用、系统可用内存和提交余量；
-- 宿主可用内存低于 5 GiB 且 Z 占用不超过 8 GiB 软上限时，自动重建内存盘释放卡住的驱动占用（紧急自愈，cache-only 保证无数据损失）；
-- 无主之页看门狗：估算宿主不可归属内存（健康基线约 -4 GiB），达到 4 GiB 先告警，达到 8 GiB 且 Z 占用不超软上限时自动重建，覆盖未触发内存危急线的慢性卡占；
-- 状态变化为 WARN/ERROR 时写日志；仅 ERROR 状态变化弹一次消息，WARN 保持静默。
-
-紧急重建先从 Primo 当前列表解析实际盘符对应的唯一磁盘编号，再检查初始化、目录/说明恢复和镜像保存的结果；失败会记录 ERROR、返回非零，不会把失败写成“已完成”。盘符不明确或同一 Primo 盘还有其他分区时不重建。重建会使可再生成缓存失效，活动应用可能需要重新加载；cache-only 约束只保证没有唯一数据损失，不等于运行零打扰。
-
-历史 `projects/docs/others` 通道及其追加式备份逻辑已在确认盘内和旧备份均为空后退役。守护器不再创建这些目录，也不依赖 `E:\Backups\Z_Drive_Backup`。
-
-## 目录合同
-
-```text
-Z:\
-├─ 使用说明.md
-├─ Caches\
-│  ├─ Personal\
-│  ├─ Work\
-│  ├─ ChromeCache\
-│  ├─ ChromeCodeCache\
-│  ├─ ChromeGPUCache\
-│  ├─ 360zip_temp\
-│  └─ WeFlow\
-├─ Scratch\
-│  ├─ Personal\
-│  └─ Work\
-├─ TEMP\
-└─ .ramdisk_ready
-```
-
-个人与工作目录只是组织边界。共享 RAM Disk 和镜像不是安全隔离。
-
-## 资源策略
-
-- 新缓存总量以 8 GiB 为软上限；盘容量 12 GiB 即内存占用预算上限（2026-07-23 起由 32 GiB 下调，原因见"已知失效模式"）。
-- 系统可用物理内存低于 8 GiB、提交余量低于 4 GiB、Z 剩余空间低于 2 GiB或占用超过软上限时告警。
-- 不自动删除未知缓存，避免打断仍在运行的 Chrome、WeFlow 或开发工具。
-- 每个缓存生产者负责自己的生命周期，在任务成功、失败或接管收口时清理或迁出 superseded、旧 basetemp 和失效候选；需要定时兜底时，只处理本 owner 命名空间内具有明确失效或过期证据的对象。
-- RamdiskGuardian 不做整盘盲目定时清空，也不代替生产者判断其他 owner 或活动缓存的保留期；它只负责骨架、监控和阈值触发的驱动重建。
-- 本机已有高速 NVMe、9950X3D 和 5090D。只有真实工作负载计时证明 I/O 是瓶颈时，才新增 Z 缓存；没有可感知收益就保持原位。
-- 大型包缓存、正式 Git 项目和需要跨重启的构建状态放 V；个人新仓库默认 `V:\Personal\Projects`。
-
-## 已知失效模式与 2026-07-23 加固
-
-Primo 动态内存管理（DMM）的删除释放在本机不可靠：盘内文件删除后驱动仍按历史高水位持有物理内存，关机保存的紧凑镜像会把满分配图整体带入下次开机（当日盘内仅约 1 GiB 数据，内存实占约 31 GiB，镜像 31.98 GiB，宿主开机内存占用 80%+）。当日处置与加固：
-
-- 盘容量 32 GiB 降为 12 GiB（容量即内存预算）；
-- 镜像重建为干净小镜像（`E:\RamdiskImage\Z.vdf` 约 0.1 GiB），开机不再复活旧占用；
-- 守护者新增紧急自愈 + 无主之页看门狗：宿主可用内存 < 5 GiB，或不可归属内存 >= 8 GiB（>= 4 GiB 先告警），且 Z 占用不超过软上限时，自动 `rxprd init 0` + `rxprd save 0` 并立即恢复骨架与说明；
-- 手动紧急释放（需管理员）：`& 'C:\Program Files\Primo Ramdisk\rxprd.exe' init 0 -s; & 'C:\Program Files\Primo Ramdisk\rxprd.exe' save 0 -s`；
-- WSL2 侧同日治理：`%USERPROFILE%\.wslconfig` 上限 32900MB 调整为 16384MB 并启用 `autoMemoryReclaim=gradual`（用户目录配置，不在本仓库管理内）。
-
-## Primo 与启动
-
-本机预期为 Z: / NTFS / 12 GiB / 动态内存 / 非临时盘，镜像位于 `E:\RamdiskImage\Z.vdf`。Windows 快速启动已关闭。Primo 的“非临时盘 + 启用镜像”负责启动重建，守护器不冒充驱动层自动挂载证明。
-
-自动恢复的最终验收需要一次自然重启后读回。没有明确重启授权时，不为这项验证中断当前工作。
-
-## 健康与运维
+使用 PowerShell 7。只读查看状态：
 
 ```powershell
-# 手动运行一次
-powershell -NoProfile -ExecutionPolicy Bypass -File E:\Projects\Tools\RamdiskGuardian\zguardian.ps1
-
-# 查看状态和最新日志
-Get-Content E:\Projects\Tools\RamdiskGuardian\logs\STATUS.txt
-Get-Content E:\Projects\Tools\RamdiskGuardian\logs\guardian.log -Tail 20
-
-# 查看计划任务
-Get-ScheduledTask RAMDisk_Code_Backup | Format-List TaskName,State
-Get-ScheduledTaskInfo RAMDisk_Code_Backup | Format-List LastRunTime,LastTaskResult
+pwsh -NoProfile -File .\Get-RamdiskHealth.ps1 -Json
+pwsh -NoProfile -File .\zguardian.ps1 -Inspect -Json
 ```
 
-`STATUS.txt` 中 `OK` 表示本轮没有资源警告；`WARN` 表示达到资源提醒阈值。Windows 计划任务 `LastTaskResult = 0` 只证明脚本结束，须与健康状态一起看。紧急重建失败返回非零；Z 不存在时守护器等待最多 150 秒，随后记录 ERROR。
+图形入口为 PCConfig 的 `tools\Show-StreamingMaintenance.ps1`。窗口显示健康、新鲜度、最近和下次任务执行、恢复冷却与活动消费者；可分别暂停自动重建或停止守护。关闭窗口不停止既有守护，也不会更改电源、显示器或驱动。
 
-## 文件清单
+## 自动运行与状态
 
-```text
-RamdiskGuardian/
-├─ README.md
-├─ DEPLOY.md
-├─ Z_使用说明.md
-├─ deploy.ps1
-├─ zguardian.ps1
-├─ run_hidden.vbs
-├─ tests/Assert-RamdiskGuardianStatic.ps1
-├─ tests/Test-RamdiskGuardianRecovery.ps1
-├─ archive/sync_code.bat.bak_20260614
-└─ logs/                         运行态，不入库
+调用链：`RAMDisk_Code_Backup` → `run_hidden.vbs` → `zguardian.ps1`。兼容任务名保留，不代表仍有数据备份。任务使用实际交互式用户、PowerShell 7、登录触发和独立的每 15 分钟触发，禁止重叠运行；全局互斥锁同样保护手动调用和部署。
+
+`logs\health.json` 是结构化观察；`logs\STATUS.txt` 为兼容的人类状态；`guardian.log`、`alerts.log` 有界轮转。健康文件使用同目录原子替换和一个 previous。退出码 0 只表示本轮完成，WARN 可以成功完成但不等于健康；关键错误必须返回非零。仅 ERROR 状态变化弹一次消息，WARN 保持静默。
+
+只读健康入口还验证任务启用状态、周期、观察时间、实际源码哈希、卷和说明文件，过时的 OK 不会当成当前正常。
+
+## 磁盘与缓存合同
+
+当前机器配置是 12 GiB、NTFS、卷标 RAMDISK 的 Primo 动态内存盘；默认 Z，自定义盘符通过部署入口配置。开始写盘前同时验证盘符、卷标和 Primo 当前唯一磁盘编号；拒绝依靠固定 0 号盘。缓存目录若意外变成重解析链接则报错，不沿链接写其它位置。
+
+创建 Personal/Work 的 Caches 和 Scratch、兼容 Chrome/360/WeFlow 缓存目录以及 TEMP。根说明来自唯一的 `Z_使用说明.md`，复制后核对哈希，全部必要步骤成功后才建立就绪标记。不要把任何 Git 正式仓库、worktree 或唯一资料放在 Z；个人新仓库使用 `V:\Personal\Projects`。
+
+缓存生产者拥有自己的生命周期：在任务成功、失败或接管收口时清理或迁出已确认失效对象。不做整盘盲目定时清空，不删除其它 owner 或活动中的未知缓存。机器级策略由 PCConfig 的 `docs\governance\dev_storage_policy.md` 拥有。
+
+## 有界自动重建
+
+保留既定阈值：盘内占用不超过 8 GiB，宿主可用内存低于 5 GiB，或者不可归属内存达到 8 GiB。触发前至少 10 秒取得 3 次连续样本；样本间隔超过 30 秒重新确认。一般资源提醒仍为盘剩余小于 2 GiB、盘使用超过 8 GiB、宿主可用内存小于 8 GiB、提交余量小于 4 GiB、不可归属内存达到 4 GiB。
+
+活动消费者、消费者证据不明、用户暂停或恢复冷却均阻止重建。尝试间隔至少 1 小时；失败暂缓 1 小时；回读无法证明至少 1 GiB 的内存改善，暂缓 6 小时。重建前重新核对 Primo 编号和卷身份，重建后验证目录、说明、卷与原生命令结果；内存改善未知不伪装成有效释放。
+
+可再生成不等于活动任务不会受影响。租约接入是合作式的，不声称未接入的旧浏览器或程序已具备占用保护。长任务应登记真实消费者 PID，续租并在结束时释放：
+
+```powershell
+.\Use-RamdiskCacheLease.ps1 -Mode Acquire -Name build -ConsumerProcessId $PID -Seconds 3600
+.\Use-RamdiskCacheLease.ps1 -Mode Renew -Name build -ConsumerProcessId $PID -Seconds 3600
+.\Use-RamdiskCacheLease.ps1 -Mode Release -Name build -ConsumerProcessId $PID
 ```
 
-归档脚本仅作历史证据，不是入口。曾经的 `/MIR` 方案在掉盘后把空源镜像到备份并造成数据丢失；当前 cache-only 设计从根上消除了“把 RAM Disk 当数据源并备份”的需求。
+租约记录 PID、进程创建时间及期限，防止 PID 复用；注册与重建使用同一互斥锁。只暂停自动重建而继续维护目录和健康：
+
+```powershell
+.\Set-RamdiskRecoveryMode.ps1 -Mode Pause -Apply -Json
+.\Set-RamdiskRecoveryMode.ps1 -Mode Resume -Apply -Json
+```
+
+恢复开关不清空冷却期。纯查看无需 `-Apply`。
+
+## 部署、恢复与验证
+
+详见 `DEPLOY.md`。部署默认只读预检；`-Apply` 执行，`-TaskOnly` 只恢复任务。快速启动和 Chrome 缓存迁移为独立显式选项。不会因重装任务而默认清空缓存、改系统电源或重启机器。
+
+```powershell
+pwsh -NoProfile -File tests\Assert-RamdiskGuardianStatic.ps1
+pwsh -NoProfile -File tests\Test-RamdiskGuardianRecovery.ps1
+pwsh -NoProfile -File tests\Test-RamdiskReliability.ps1
+pwsh -NoProfile -File tests\Test-RamdiskDeployRollback.ps1
+```
+
+测试使用隔离临时目录和假 Primo，不初始化实际磁盘。一次 `zguardian.ps1 -NoRecovery -WaitSeconds 0` 可以验证维护与错误传播，但不能证明真实重建或自然重启恢复；这些验收必须单独记录。

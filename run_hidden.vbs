@@ -1,11 +1,11 @@
-' ============================================================
-'  Hidden launcher - called by Task "RAMDisk_Code_Backup".
-'  Runs the guardian without a CMD window / focus stealing.
-'  Portable: derives its own folder, so it works from any path.
-' ============================================================
-Dim fso, here, shell, exitCode
+' Hidden launcher. Returns the actual PowerShell 7 result to Task Scheduler.
+Option Explicit
+Dim fso, here, shell, engine, exitCode
 Set fso = CreateObject("Scripting.FileSystemObject")
 here = fso.GetParentFolderName(WScript.ScriptFullName)
+engine = "C:\Program Files\PowerShell\7\pwsh.exe"
+If WScript.Arguments.Count > 0 Then engine = WScript.Arguments(0)
+If Not fso.FileExists(engine) Then WScript.Quit 127
 Set shell = CreateObject("WScript.Shell")
-exitCode = shell.Run("powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & here & "\zguardian.ps1""", 0, True)
+exitCode = shell.Run("""" & engine & """ -NoProfile -NonInteractive -ExecutionPolicy Bypass -File """ & here & "\zguardian.ps1""", 0, True)
 WScript.Quit exitCode

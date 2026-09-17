@@ -37,7 +37,7 @@ Assert-Text 'retired legacy backup channels are absent from active guardian beha
 
 Assert-Text 'deployer does not recreate the retired backup destination' (
     $deployText -notmatch 'Z_Drive_Backup' -and
-    $deployText -notmatch '\$backup\b'
+    $deployText -notmatch 'robocopy'
 )
 
 Assert-Text 'README call chain invokes zguardian directly from VBS' (
@@ -94,7 +94,7 @@ Assert-Text 'guardian validates the configured drive and RAMDISK identity before
 Assert-Text 'deployer normalizes one-letter drive input and clears a stale custom override when returning to Z' (
     $deployText.Contains("[ValidatePattern('^[A-Za-z]$')]") -and
     $deployText.Contains('$RamDrive = $RamDrive.ToUpperInvariant()') -and
-    $deployText.Contains("[string]::Equals([string]`$ramVolume.FileSystemLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)") -and
+    $deployText.Contains("[string]::Equals([string]`$volume.FileSystemLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)") -and
     $deployText.Contains('Remove-Item -LiteralPath $ramDriveConfig -Force')
 )
 
