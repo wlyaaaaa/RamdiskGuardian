@@ -11,6 +11,7 @@ try{
     $volume=Get-Volume -DriveLetter $result.Drive -ErrorAction Stop
     $result.Volume=@{LabelMatches=($volume.FileSystemLabel -ieq 'RAMDISK');FileSystem=$volume.FileSystem;Health=[string]$volume.HealthStatus;UsedGiB=[Math]::Round(($volume.Size-$volume.SizeRemaining)/1GB,2);FreeGiB=[Math]::Round($volume.SizeRemaining/1GB,2)}
     if(-not $result.Volume.LabelMatches -or $volume.HealthStatus -ne 'Healthy'){$reasons.Add('volume-health-or-identity-mismatch')}
+    if ($volume.FileSystem -ine 'NTFS') { $reasons.Add('volume-filesystem-mismatch') }
     $disk=$result.Drive+':\'
     $paths=@('Caches\Personal','Caches\Work','Scratch\Personal','Scratch\Work','.ramdisk_ready')
     $missing=@($paths|Where-Object{-not(Test-Path -LiteralPath (Join-Path $disk $_))})
@@ -25,10 +26,14 @@ try{
 try{
     $task=Get-ScheduledTask -TaskName 'RAMDisk_Code_Backup' -ErrorAction Stop;$info=$task|Get-ScheduledTaskInfo
     $interval=[timespan]::FromMinutes(15)
-    $periodic=@($task.Triggers|Where-Object{$_.Repetition.Interval}|Select-Object -First 1)
+    $periodic=@($task.Triggers|Where-Object{$_.Enabled -ne $false -and $_.Repetition.Interval}|Select-Object -First 1)
     if($periodic.Count){$interval=[System.Xml.XmlConvert]::ToTimeSpan($periodic[0].Repetition.Interval)}
     $result.Task=@{Name=$task.TaskName;State=[string]$task.State;Enabled=$task.Settings.Enabled;LastRun=$info.LastRunTime;NextRun=$info.NextRunTime;LastTaskResult=$info.LastTaskResult;IntervalSeconds=$interval.TotalSeconds}
     if(-not $task.Settings.Enabled){$reasons.Add('guardian-task-paused')}
+    if ($periodic.Count -eq 0) { $reasons.Add('guardian-periodic-trigger-missing') }
+    if ($interval.TotalSeconds -le 0) { throw 'Invalid recurring trigger interval.' }
+    if ($null -eq $info.LastTaskResult) { $reasons.Add('guardian-last-run-result-unavailable') }
+    elseif ($task.State -ne 'Running' -and [long]$info.LastTaskResult -ne 0) { $reasons.Add('guardian-last-run-failed') }
     $staleSeconds=$interval.TotalSeconds*2+180
 }catch{$staleSeconds=1980;$reasons.Add('guardian-task-unavailable')}
 try{
@@ -45,6 +50,11 @@ try{
 try{
     $state=Read-RamdiskJson -Path (Join-Path $Root 'logs\recovery-state.json') -Default (New-RamdiskRecoveryState)
     $control=Read-RamdiskJson -Path (Join-Path $Root 'logs\recovery-control.json') -Default @{Paused=$false}
+    if ($null -eq $state -or $state.Schema -ne 'ramdisk.recovery-state.v1' -or $state.LastOutcome -notin @('none','attempting','effective','no-benefit','unknown','failed')) { throw 'Invalid recovery state.' }
+    if ($null -eq $control -or $control.Paused -isnot [bool]) { throw 'Recovery pause must be an explicit boolean.' }
+    if ($control.Paused) { $reasons.Add('automatic-recovery-paused') }
+    if ($state.LastOutcome -eq 'failed') { $reasons.Add('last-recovery-failed') }
+    if ($state.LastOutcome -eq 'attempting') { $reasons.Add('recovery-not-yet-confirmed') }
     $leases=Get-RamdiskLeaseState -Directory (Join-Path $Root 'logs\leases')
     $result.Recovery=@{Paused=$control.Paused;LastOutcome=$state.LastOutcome;LastAttemptUtc=$state.LastAttemptUtc;SuppressUntilUtc=$state.SuppressUntilUtc;ActiveConsumers=$leases.Active;UnknownConsumers=$leases.Unknown}
     if($leases.Unknown -gt 0){$reasons.Add('consumer-state-unknown')}
