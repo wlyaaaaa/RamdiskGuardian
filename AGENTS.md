@@ -6,3 +6,4 @@
 - 自动重建遵循持续样本、消费者租约、暂停和冷却。不得把合作式租约宣传为所有旧应用均受保护；不初始化真实磁盘来运行测试。
 - 健康快照、恢复状态与控制 JSON 同目录原子写入；日志有界。退出码、健康、部署、真实恢复、自然重启与 Git 发布分别验收。
 - 测试至少覆盖 Static、Recovery、Reliability、Health 和 DeployRollback 五套脚本及 AST/git diff --check；所有假磁盘和假原生命令留在任务专属 TEMP，结束清理。
+- 资源成本检查用 `Get-RamdiskEfficiency.ps1`（Primo 查询显式 `-IncludePrimo`）；磁盘容量、文件大小和驱动分配不可混用。镜像维护与缓存准入见 `docs/cache-efficiency.md`；相关修改额外运行 `tests/Test-RamdiskEfficiency.ps1`，不为验证触发真实重建。
