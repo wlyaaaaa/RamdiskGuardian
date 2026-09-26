@@ -13,11 +13,15 @@ function Assert-Text {
 $guardian = Join-Path $RepoRoot 'zguardian.ps1'
 $deploy = Join-Path $RepoRoot 'deploy.ps1'
 $readme = Join-Path $RepoRoot 'README.md'
+$agents = Join-Path $RepoRoot 'AGENTS.md'
+$launcher = Join-Path $RepoRoot 'run_hidden.vbs'
 $usage = Join-Path $RepoRoot 'Z_使用说明.md'
 
 $guardianText = Get-Content -LiteralPath $guardian -Raw -Encoding utf8
 $deployText = Get-Content -LiteralPath $deploy -Raw -Encoding utf8
 $readmeText = Get-Content -LiteralPath $readme -Raw -Encoding utf8
+$agentsText = Get-Content -LiteralPath $agents -Raw -Encoding utf8
+$launcherText = Get-Content -LiteralPath $launcher -Raw -Encoding utf8
 $usageText = if (Test-Path -LiteralPath $usage) { Get-Content -LiteralPath $usage -Raw -Encoding utf8 } else { '' }
 
 $tokens = $null
@@ -40,9 +44,9 @@ Assert-Text 'deployer does not recreate the retired backup destination' (
     $deployText -notmatch 'robocopy'
 )
 
-Assert-Text 'README call chain invokes zguardian directly from VBS' (
-    $readmeText -match 'run_hidden\.vbs.*zguardian\.ps1' -and
-    $readmeText -notmatch 'run_hidden\.vbs.*sync_code\.bat'
+Assert-Text 'hidden launcher invokes zguardian directly' (
+    $launcherText -match 'zguardian\.ps1' -and
+    $launcherText -notmatch 'sync_code\.bat'
 )
 
 Assert-Text 'README active file list does not advertise sync_code.bat as entrypoint' (
@@ -73,8 +77,7 @@ Assert-Text 'cache producers own bounded lifecycle cleanup' (
     $usageText -match '缓存生产者' -and
     $usageText -match '成功、失败或接管收口' -and
     $usageText -match '不.*整盘.*定时清空' -and
-    $readmeText -match '缓存生产者' -and
-    $readmeText -match '成功、失败或接管收口'
+    $agentsText -match '不自动清理其他程序的未知缓存'
 )
 
 Assert-Text 'host memory and cache soft-limit health checks are present' (
@@ -100,10 +103,10 @@ Assert-Text 'deployer normalizes one-letter drive input and clears a stale custo
 
 Assert-Text 'WARN health is logged without an interactive notification' (
     $guardianText -match 'if \(\$health -eq ''ERROR'' -and \$health -ne \$last\)' -and
-    $readmeText -match '仅 ERROR 状态变化弹一次消息，WARN 保持静默'
+    $agentsText -match 'ERROR 变化才弹一次消息，WARN 保持静默'
 )
 
-Assert-Text 'README makes new Z usage cache-only and points to PCConfig policy' (
-    $readmeText -match 'cache-only' -and
-    $readmeText -match 'dev_storage_policy\.md'
+Assert-Text 'project rules reserve Z for caches and defer machine policy to PCConfig' (
+    $agentsText -match '只放可重建缓存' -and
+    $agentsText -match 'dev_storage_policy\.md'
 )

@@ -1,9 +1,8 @@
 # RamdiskGuardian 项目规则
 
-- 这是 cache-only RAMDisk 守护，不恢复退役的源码/文档备份通道。唯一资料放在持久存储；机器政策引用 PCConfig 的 `docs/governance/dev_storage_policy.md`，不要复制第二份机器权威。
-- 使用 PowerShell 7，兼容任务名保留。默认诊断和部署预检不写入；部署、电源和 Chrome 缓存变更分别显式选择，不扩大任务恢复范围。
-- 写盘前验证配置盘符、卷标及 Primo 唯一实际编号；重建前复核身份。关键写入必须报错并回读，ERROR 非零退出，不以日志或任务完成冒充健康。
-- 自动重建遵循持续样本、消费者租约、暂停和冷却。不得把合作式租约宣传为所有旧应用均受保护；不初始化真实磁盘来运行测试。
-- 健康快照、恢复状态与控制 JSON 同目录原子写入；日志有界。退出码、健康、部署、真实恢复、自然重启与 Git 发布分别验收。
-- 测试至少覆盖 Static、Recovery、Reliability、Health 和 DeployRollback 五套脚本及 AST/git diff --check；所有假磁盘和假原生命令留在任务专属 TEMP，结束清理。
-- 资源成本检查用 `Get-RamdiskEfficiency.ps1`（Primo 查询显式 `-IncludePrimo`）；磁盘容量、文件大小和驱动分配不可混用。镜像维护与缓存准入见 `docs/cache-efficiency.md`；相关修改额外运行 `tests/Test-RamdiskEfficiency.ps1`，不为验证触发真实重建。
+- Z 盘只放可重建缓存和临时内容；不恢复旧源码/文档备份通道，不放唯一资料，也不自动清理其他程序的未知缓存。机器级存储政策由 PCConfig 的 `docs/governance/dev_storage_policy.md` 持有。
+- 守护任务旧名 `RAMDisk_Code_Backup` 仅为兼容。默认检查与部署预检只读；任务恢复、电源设置和 Chrome 缓存迁移分别显式选择。
+- 写盘前核对配置盘符、卷标和 Primo 唯一实际编号；重建前再核对。关键写入失败必须返回错误并精确回读，不以日志或任务完成冒充健康。
+- 自动重建须满足持续压力、缓存软上限、真实消费者租约、用户暂停和冷却规则；合作式租约不代表未接入的旧程序得到保护。不得为测试初始化或重建真实磁盘。
+- 健康、恢复和控制状态同目录原子写入；严重错误非零退出，ERROR 变化才弹一次消息，WARN 保持静默。源码测试、部署、真实重建、自然重启恢复分别验收。
+- 资源成本检查见 `Get-RamdiskEfficiency.ps1`，Primo 查询显式使用 `-IncludePrimo`；容量、卷占用、镜像大小和驱动分配不可混为一谈。镜像维护与缓存准入见 `docs/cache-efficiency.md`。
