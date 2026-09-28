@@ -14,7 +14,7 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($GuardianPath, [ref]$t
 if ($parseErrors.Count) { throw 'Guardian source does not parse.' }
 $functions = @($ast.FindAll({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
-    $node.Name -in @('Invoke-PrimoCommand', 'Resolve-PrimoDiskIndex')
+    $node.Name -in @('Invoke-PrimoCommand', 'Resolve-PrimoDiskIndex', 'Read-RamdiskVolume')
 }, $true) | ForEach-Object { $_.Extent.Text }) -join "`n"
 $recovery = @($ast.FindAll({ param($node)
     $node -is [Management.Automation.Language.IfStatementAst] -and
@@ -37,6 +37,7 @@ exit 2
 $runner = @'
 param([string]$CaseRoot)
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $CaseRoot 'ramdisk-guardian.psm1') -Force
 $fixture = Get-Content -LiteralPath (Join-Path $CaseRoot 'fixture.json') -Raw | ConvertFrom-Json
 $rxprd = Join-Path $CaseRoot 'primo.cmd'
 if ($fixture.MissingExecutable) { $rxprd = Join-Path $CaseRoot 'missing-primo.exe' }
@@ -50,7 +51,15 @@ $decision=[pscustomobject]@{Reason='isolated threshold fixture'}
 $beforeAvailableMemoryGB=4;$beforeUnaccountedGB=0
 $verifiedPrimoIndex=if($ramLetter -eq 'R'){2}else{0}
 $ramVolume=[pscustomobject]@{UniqueId='isolated-test-volume';FileSystemLabel='RAMDISK'}
-function Get-Volume { $ramVolume }
+$memoryIdentity='isolated-test-boot-and-volume'
+$memoryAssessment=[pscustomobject]@{BaselineResidualGB=-4;CorrelatedGrowthGB=8}
+$script:volumeReads=0
+function Get-Volume {
+    $script:volumeReads++
+    if($fixture.UnavailableReads -contains $script:volumeReads){throw 'transient volume read failure'}
+    if($fixture.WrongLabel){return [pscustomobject]@{UniqueId='other-volume';FileSystemLabel='DATA'}}
+    $ramVolume
+}
 function Get-RamdiskLeaseState { [pscustomobject]@{Active=0;Unknown=0} }
 function Read-RamdiskJson { @{Paused=$false} }
 function Write-RamdiskJson { param($Path,$Value) $Value|ConvertTo-Json|Set-Content -LiteralPath $Path }
@@ -74,7 +83,7 @@ function Set-Health($health, $detail) {
 }
 function Start-Sleep {}
 function Read-RamDiskSpace { return @(11, 12) }
-function Read-UnaccountedGB { return -4 }
+function Read-UnaccountedGB { $script:residualAvailableGB=16;return -4 }
 function Get-CimInstance {
     [pscustomobject]@{AvailableMBytes=16384; CommitLimit=64GB; CommittedBytes=32GB}
 }
@@ -85,6 +94,10 @@ exit 0
 
 $cases = @(
     @{Name='current Z succeeds'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); ExpectedIndex=0},
+    @{Name='transient identity reads recover before initialization'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); UnavailableReads=@(1,2); ExpectedIndex=0},
+    @{Name='transient post-init identity reads recover before save'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); UnavailableReads=@(2,3); ExpectedIndex=0},
+    @{Name='persistent identity failure never initializes'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); UnavailableReads=@(1,2,3); ExpectedCalls=@('ls')},
+    @{Name='wrong identity never initializes'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); WrongLabel=$true; ExpectedCalls=@('ls')},
     @{Name='custom drive uses its actual disk index'; Drive='R'; Listing=@('#0 12288 SCSI Yes Good Z:', '#2 12288 SCSI Yes Good R:'); ExpectedIndex=2},
     @{Name='init failure never saves or reports done'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); InitExit=3; ExpectedCalls=@('ls', 'init 0')},
     @{Name='save failure reports ERROR rather than done'; Drive='Z'; Listing=@('#0 12288 SCSI Yes Good Z:'); SaveExit=3; ExpectedCalls=@('ls', 'init 0', 'save 0')},
@@ -107,8 +120,8 @@ try {
         $number++
         $caseRoot = Join-Path $testRoot ([string]$number)
         New-Item -ItemType Directory -Path $caseRoot | Out-Null
-        $fixture = @{Drive=$case.Drive; Listing=$case.Listing; ListExit=0; InitExit=0; SaveExit=0; CopyFailure=$false; MissingExecutable=$false}
-        foreach ($key in @('ListExit', 'InitExit', 'SaveExit', 'CopyFailure', 'MissingExecutable')) {
+        $fixture = @{Drive=$case.Drive; Listing=$case.Listing; ListExit=0; InitExit=0; SaveExit=0; CopyFailure=$false; MissingExecutable=$false;UnavailableReads=@();WrongLabel=$false}
+        foreach ($key in @('ListExit', 'InitExit', 'SaveExit', 'CopyFailure', 'MissingExecutable', 'UnavailableReads', 'WrongLabel')) {
             if ($case.ContainsKey($key)) { $fixture[$key] = $case[$key] }
         }
         $fixture | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $caseRoot 'fixture.json') -Encoding utf8
@@ -117,6 +130,7 @@ try {
         Set-Content -LiteralPath (Join-Path $caseRoot 'primo.cmd') -Value $nativeStub -Encoding ascii
         Set-Content -LiteralPath (Join-Path $caseRoot 'runner.ps1') -Value $runner -Encoding utf8
         Set-Content -LiteralPath (Join-Path $caseRoot 'production-functions.ps1') -Value $functions -Encoding utf8
+        Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $GuardianPath) 'ramdisk-guardian.psm1') -Destination $caseRoot
         Set-Content -LiteralPath (Join-Path $caseRoot 'production-recovery.ps1') -Value $recovery[0].Extent.Text -Encoding utf8
         Set-Content -LiteralPath (Join-Path $caseRoot 'guide.md') -Value 'cache-only test fixture' -Encoding utf8
         & $engine -NoProfile -ExecutionPolicy Bypass -File (Join-Path $caseRoot 'runner.ps1') -CaseRoot $caseRoot

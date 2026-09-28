@@ -27,7 +27,8 @@ Check (-not $decision.Allowed -and $decision.Reason -eq 'recovery-cooldown') 'su
 $cooldown=$three.State.Clone();$cooldown.SuppressUntilUtc=$now.AddHours(6).ToString('o')
 $decision=Resolve-RamdiskRecoveryDecision -State $cooldown -PressureReason 'low-host-memory' -NowUtc $now.AddSeconds(15)
 Check (-not $decision.Allowed -and $decision.Reason -eq 'no-benefit-or-failure-cooldown') 'ineffective attempts have extended suppression'
-Check ((Get-RamdiskPressureReason -AvailableGB 4 -UsedGB 0.5 -UnaccountedGB -4) -eq 'low-host-memory') 'existing emergency threshold remains supported'
+Check ($null -eq (Get-RamdiskPressureReason -AvailableGB 4 -UsedGB 0.5 -UnaccountedGB -4)) 'low host memory alone cannot reinitialize the driver'
+Check ((Get-RamdiskPressureReason -AvailableGB 4 -UsedGB 0.5 -UnaccountedGB -4 -CorrelatedGrowthGB 4) -eq 'low-memory-with-unaccounted-growth') 'low memory fallback requires corroborated unaccounted growth'
 Check ($null -eq (Get-RamdiskPressureReason -AvailableGB 4 -UsedGB 9 -UnaccountedGB 10)) 'large cache volume is not reset by this policy'
 Check ($null -eq (Get-RamdiskPressureReason -AvailableGB $null -UsedGB 1 -UnaccountedGB $null)) 'unavailable metrics are not pressure evidence'
 Check ((Get-RamdiskRecoveryBenefit -BeforeAvailableGB 4 -AfterAvailableGB 8).State -eq 'effective') 'recovery benefit is measured'

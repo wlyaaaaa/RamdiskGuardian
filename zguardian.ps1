@@ -60,23 +60,46 @@ function Read-RamDiskSpace {
 }
 
 function Read-UnaccountedGB {
+    $script:residualAvailableGB=$null
+    $script:hostBootUtc=$null
     try {
         $c = Get-Counter '\Memory\Available Bytes','\Memory\Modified Page List Bytes','\Memory\Cache Bytes','\Memory\Pool Paged Bytes','\Memory\Pool Nonpaged Bytes','\Process(_Total)\Working Set' -ErrorAction Stop
-        $avail = 0; $mod = 0; $cache = 0; $paged = 0; $nonpaged = 0; $ws = 0
+        $values=@{}
         foreach ($s in $c.CounterSamples) {
-            if ($s.Path -match 'available bytes$') { $avail = $s.CookedValue }
-            elseif ($s.Path -match 'modified page list bytes$') { $mod = $s.CookedValue }
-            elseif ($s.Path -match 'cache bytes$') { $cache = $s.CookedValue }
-            elseif ($s.Path -match 'pool paged bytes$') { $paged = $s.CookedValue }
-            elseif ($s.Path -match 'pool nonpaged bytes$') { $nonpaged = $s.CookedValue }
-            elseif ($s.Path -match 'working set$') { $ws = $s.CookedValue }
+            if($s.Status -ne 0 -or -not [double]::IsFinite($s.CookedValue) -or $s.CookedValue -lt 0){throw 'Invalid memory counter sample.'}
+            $name=($s.Path -split '\\')[-1].ToLowerInvariant()
+            if($values.ContainsKey($name)){throw 'Duplicate memory counter sample.'}
+            $values[$name]=[double]$s.CookedValue
         }
-        $totalBytes = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).TotalVisibleMemorySize * 1KB
-        $inUse = $totalBytes - $avail
-        return [math]::Round(($inUse - ($ws + $paged + $nonpaged + $cache + $mod)) / 1GB, 1)
+        foreach($name in @('available bytes','modified page list bytes','cache bytes','pool paged bytes','pool nonpaged bytes','working set')){
+            if(-not $values.ContainsKey($name)){throw "Missing memory counter: $name"}
+        }
+        $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $totalBytes=[double]$os.TotalVisibleMemorySize * 1KB
+        if($totalBytes -le 0 -or $values['available bytes'] -gt $totalBytes){throw 'Invalid physical memory size.'}
+        $script:hostBootUtc=$os.LastBootUpTime.ToUniversalTime().ToString('o')
+        # Corroborate the residual with the same available-memory counter sample.
+        $script:residualAvailableGB=[Math]::Round($values['available bytes']/1GB,1)
+        $inUse=$totalBytes-$values['available bytes']
+        $accounted=$values['working set']+$values['pool paged bytes']+$values['pool nonpaged bytes']+$values['cache bytes']+$values['modified page list bytes']
+        return [math]::Round(($inUse-$accounted)/1GB,1)
     } catch {
         return $null
     }
+}
+
+function Read-RamdiskVolume {
+    # A readable wrong label is returned immediately; the caller refuses it.
+    $failure='volume identity unavailable'
+    for($attempt=0;$attempt -lt 3;$attempt++){
+        try{
+            $volumes=@(Get-Volume -DriveLetter $ramLetter -ErrorAction Stop)
+            if($volumes.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace($volumes[0].FileSystemLabel) -and -not [string]::IsNullOrWhiteSpace($volumes[0].UniqueId)){return $volumes[0]}
+            $failure='volume label or unique identity unavailable'
+        }catch{$failure=$_.Exception.Message}
+        if($attempt -lt 2){Start-Sleep -Milliseconds 500}
+    }
+    throw "Cannot identify $ramLetter after three reads: $failure"
 }
 
 function Invoke-PrimoCommand([string[]]$Arguments) {
@@ -126,7 +149,7 @@ try{
     $deadline=[datetime]::UtcNow.AddSeconds($WaitSeconds)
     while(-not (Test-Path -LiteralPath "$Z\") -and [datetime]::UtcNow -lt $deadline){Start-Sleep -Seconds 3}
     if(-not (Test-Path -LiteralPath "$Z\")){throw "disk $Z is MISSING - check Primo at the next maintenance opportunity"}
-    $ramVolume=Get-Volume -DriveLetter $ramLetter -ErrorAction Stop
+    $ramVolume=Read-RamdiskVolume
     $ramVolumeLabel=[string]$ramVolume.FileSystemLabel
     if(-not [string]::Equals($ramVolumeLabel, 'RAMDISK', [StringComparison]::OrdinalIgnoreCase)){throw "refusing $Z because its volume is not RAMDISK"}
     $verifiedPrimoIndex=Resolve-PrimoDiskIndex
@@ -162,25 +185,32 @@ try{
         $commitHeadroomGB=[Math]::Round(($memory.CommitLimit-$memory.CommittedBytes)/1GB,1)
     }catch{$warnings+='host memory query failed'}
     $unaccountedGB=Read-UnaccountedGB
+    if($null -ne $script:residualAvailableGB){$availableMemoryGB=$script:residualAvailableGB}
     $recoveryStatePath=Join-Path $logDir 'recovery-state.json'
     $recoveryState=Read-RamdiskJson -Path $recoveryStatePath -Default (New-RamdiskRecoveryState)
+    $memoryIdentity="$script:hostBootUtc|$($ramVolume.UniqueId)|$total"
+    $memoryAssessment=Get-RamdiskMemoryAssessment -State $recoveryState.MemoryBaseline -Identity $memoryIdentity -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB
+    $recoveryState.MemoryBaseline=$memoryAssessment.State
     $control=Read-RamdiskJson -Path (Join-Path $logDir 'recovery-control.json') -Default @{Paused=$false}
     if($control.Paused -isnot [bool]){throw 'Invalid recovery control state.'}
     $consumerState=Get-RamdiskLeaseState -Directory (Join-Path $logDir 'leases')
-    $pressureReason=Get-RamdiskPressureReason -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB
-    $decision=Resolve-RamdiskRecoveryDecision -State $recoveryState -PressureReason $pressureReason -Paused:($NoRecovery -or $control.Paused) -ActiveLeaseCount $consumerState.Active -LeaseEvidenceUnknown:($consumerState.Unknown -gt 0)
+    $pressureReason=Get-RamdiskPressureReason -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB -CorrelatedGrowthGB $memoryAssessment.CorrelatedGrowthGB
+    $decision=Resolve-RamdiskRecoveryDecision -State $recoveryState -PressureReason $pressureReason -RelativeEvidenceReady:$memoryAssessment.TrendReady -Paused:($NoRecovery -or $control.Paused) -ActiveLeaseCount $consumerState.Active -LeaseEvidenceUnknown:($consumerState.Unknown -gt 0)
     for($sampleNumber=0;$sampleNumber -lt 2 -and $decision.Reason -eq 'confirming-pressure';$sampleNumber++){
         Start-Sleep -Seconds 5
         $memory=Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
         $availableMemoryGB=[Math]::Round($memory.AvailableMBytes/1024,1)
         $commitHeadroomGB=[Math]::Round(($memory.CommitLimit-$memory.CommittedBytes)/1GB,1)
         $unaccountedGB=Read-UnaccountedGB
+        if($null -ne $script:residualAvailableGB){$availableMemoryGB=$script:residualAvailableGB}
         $space=Read-RamDiskSpace
         if($null -eq $space[0]){throw 'Disk query failed during pressure confirmation.'}
         $free=$space[0];$total=$space[1];$used=[Math]::Round($total-$free,1)
-        $pressureReason=Get-RamdiskPressureReason -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB
+        $memoryAssessment=Get-RamdiskMemoryAssessment -State $decision.State.MemoryBaseline -Identity $memoryIdentity -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB
+        $decision.State.MemoryBaseline=$memoryAssessment.State
+        $pressureReason=Get-RamdiskPressureReason -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB -CorrelatedGrowthGB $memoryAssessment.CorrelatedGrowthGB
         $consumerState=Get-RamdiskLeaseState -Directory (Join-Path $logDir 'leases')
-        $decision=Resolve-RamdiskRecoveryDecision -State $decision.State -PressureReason $pressureReason -ActiveLeaseCount $consumerState.Active -LeaseEvidenceUnknown:($consumerState.Unknown -gt 0)
+        $decision=Resolve-RamdiskRecoveryDecision -State $decision.State -PressureReason $pressureReason -RelativeEvidenceReady:$memoryAssessment.TrendReady -ActiveLeaseCount $consumerState.Active -LeaseEvidenceUnknown:($consumerState.Unknown -gt 0)
     }
     $recoveryState=$decision.State
     Write-RamdiskJson -Path $recoveryStatePath -Value $recoveryState
@@ -191,17 +221,18 @@ try{
     if ($releaseReason) {
         try{
             $diskIndex=Resolve-PrimoDiskIndex
-            $currentVolume=Get-Volume -DriveLetter $ramLetter -ErrorAction Stop
+            $currentVolume=Read-RamdiskVolume
             if($diskIndex -ne $verifiedPrimoIndex -or $currentVolume.UniqueId -ne $ramVolume.UniqueId -or $currentVolume.FileSystemLabel -ine 'RAMDISK'){throw 'RAM disk identity changed before recovery.'}
             $consumerState=Get-RamdiskLeaseState -Directory (Join-Path $logDir 'leases')
             $control=Read-RamdiskJson -Path (Join-Path $logDir 'recovery-control.json') -Default @{Paused=$false}
             if($consumerState.Active -gt 0 -or $consumerState.Unknown -gt 0 -or $control.Paused -ne $false){throw 'A consumer or pause appeared before recovery.'}
             $recoveryState.LastAttemptUtc=[datetime]::UtcNow.ToString('o');$recoveryState.LastOutcome='attempting'
             Write-RamdiskJson -Path $recoveryStatePath -Value $recoveryState
+            Log "recovery evidence: available=$availableMemoryGB GB; used=$used GB; residual=$unaccountedGB GB; baseline=$($memoryAssessment.BaselineResidualGB) GB; correlated growth=$($memoryAssessment.CorrelatedGrowthGB) GB"
             Log "EMERGENCY release: $releaseReason - reinitializing Primo disk #$diskIndex"
             Invoke-PrimoCommand @('init',[string]$diskIndex,'-s')|Out-Null
             Start-Sleep -Seconds 2
-            $afterVolume=Get-Volume -DriveLetter $ramLetter -ErrorAction Stop
+            $afterVolume=Read-RamdiskVolume
             if($afterVolume.FileSystemLabel -ine 'RAMDISK'){throw 'Recovered volume identity is not RAMDISK.'}
             foreach($dir in $dirs){if(-not (Test-Path -LiteralPath $dir)){[void](New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop)}}
             Copy-Item -LiteralPath $usageSource.FullName -Destination $usageTarget -Force -ErrorAction Stop
@@ -219,8 +250,12 @@ try{
                 $commitHeadroomGB=[Math]::Round(($memory.CommitLimit-$memory.CommittedBytes)/1GB,1)
             }catch{$warnings+='post-recovery memory query unavailable'}
             $unaccountedGB=Read-UnaccountedGB
+            if($null -ne $script:residualAvailableGB){$availableMemoryGB=$script:residualAvailableGB}
             $benefit=Get-RamdiskRecoveryBenefit -BeforeAvailableGB $beforeAvailableMemoryGB -AfterAvailableGB $availableMemoryGB -BeforeUnaccountedGB $beforeUnaccountedGB -AfterUnaccountedGB $unaccountedGB
             $recoveryState.LastOutcome=$benefit.State
+            # Rebuilding changes the reference allocation, but not the cooldown.
+            $memoryAssessment=Get-RamdiskMemoryAssessment -State $null -Identity $memoryIdentity -AvailableGB $availableMemoryGB -UsedGB $used -UnaccountedGB $unaccountedGB
+            $recoveryState.MemoryBaseline=$memoryAssessment.State
             if($benefit.State -ne 'effective'){$recoveryState.SuppressUntilUtc=[datetime]::UtcNow.AddHours(6).ToString('o');$warnings+="memory relief $($benefit.State); repeated recovery suppressed for six hours"}
             Write-RamdiskJson -Path $recoveryStatePath -Value $recoveryState
             $script:latestRecovery=@{Decision=$decision.Reason;Allowed=$true;LastOutcome=$benefit.State;LastAttemptUtc=$recoveryState.LastAttemptUtc;SuppressUntilUtc=$recoveryState.SuppressUntilUtc;VolumeRebuilt=$true}
@@ -239,8 +274,10 @@ try{
     if($null -ne $availableMemoryGB -and $availableMemoryGB -lt $minimumAvailableMemoryGB){$warnings+="host available memory $availableMemoryGB GB is below $minimumAvailableMemoryGB GB"}
     if($null -ne $commitHeadroomGB -and $commitHeadroomGB -lt $minimumCommitHeadroomGB){$warnings+="commit headroom $commitHeadroomGB GB is below $minimumCommitHeadroomGB GB"}
     if($null -ne $unaccountedGB -and $unaccountedGB -ge 4){$warnings+="unaccounted host memory $unaccountedGB GB exceeds 4 GB"}
-    $script:latestMetrics=@{UsedGB=$used;FreeGB=$free;TotalGB=$total;AvailableMemoryGB=$availableMemoryGB;CommitHeadroomGB=$commitHeadroomGB;UnaccountedGB=$unaccountedGB}
-    $detail="$Z present, $used GB used, $free GB free; host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB, unaccounted $unaccountedGB GB"
+    if($null -ne $memoryAssessment.CorrelatedGrowthGB -and $memoryAssessment.CorrelatedGrowthGB -ge 4){$warnings+="correlated unaccounted memory growth $($memoryAssessment.CorrelatedGrowthGB) GB exceeds 4 GB"}
+    if($memoryAssessment.Status -eq 'unavailable'){$warnings+='memory residual unavailable; relative recovery detection unavailable'}
+    $script:latestMetrics=@{UsedGB=$used;FreeGB=$free;TotalGB=$total;AvailableMemoryGB=$availableMemoryGB;CommitHeadroomGB=$commitHeadroomGB;UnaccountedGB=$unaccountedGB;MemoryBaselineStatus=$memoryAssessment.Status;BaselineResidualGB=$memoryAssessment.BaselineResidualGB;ResidualGrowthGB=$memoryAssessment.ResidualGrowthGB;AvailableLossGB=$memoryAssessment.AvailableLossGB;CorrelatedGrowthGB=$memoryAssessment.CorrelatedGrowthGB;MemoryTrendReady=$memoryAssessment.TrendReady}
+    $detail="$Z present, $used GB used, $free GB free; host available $availableMemoryGB GB, commit headroom $commitHeadroomGB GB, unaccounted $unaccountedGB GB; memory baseline $($memoryAssessment.Status), correlated growth $($memoryAssessment.CorrelatedGrowthGB) GB"
     if($warnings.Count){Set-Health 'WARN' (($warnings -join '; ')+'; '+$detail)}else{Set-Health 'OK' $detail}
     exit 0
 }catch{
