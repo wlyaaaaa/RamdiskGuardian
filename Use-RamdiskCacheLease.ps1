@@ -23,7 +23,12 @@ try{
     }
     $process=Get-Process -Id $ConsumerProcessId -ErrorAction Stop
     $old=Read-RamdiskJson -Path $path
-    if($old -and [datetimeoffset]$old.ExpiresUtc -gt [datetimeoffset]::UtcNow -and [int]$old.ProcessId -ne $ConsumerProcessId){throw 'The named lease is still active for another process.'}
+    if($old -and [datetimeoffset]$old.ExpiresUtc -gt [datetimeoffset]::UtcNow -and [int]$old.ProcessId -ne $ConsumerProcessId){
+        $oldProcess=$null
+        try{$oldProcess=Get-Process -Id ([int]$old.ProcessId) -ErrorAction Stop}
+        catch{if($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound){throw}}
+        if($oldProcess -and [math]::Abs(($oldProcess.StartTime.ToUniversalTime()-([datetimeoffset]$old.ProcessStartUtc).UtcDateTime).TotalSeconds) -lt 1){throw 'The named lease is still active for another process.'}
+    }
     $value=@{Schema='ramdisk.cache-lease.v1';Name=$Name;ProcessId=$ConsumerProcessId;ProcessStartUtc=$process.StartTime.ToUniversalTime().ToString('o');ExpiresUtc=[datetime]::UtcNow.AddSeconds($Seconds).ToString('o')}
     Write-RamdiskJson -Path $path -Value $value
     Read-RamdiskJson -Path $path|ConvertTo-Json

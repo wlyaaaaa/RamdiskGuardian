@@ -53,6 +53,20 @@ try{
     Check ($leaseState.Active -eq 1 -and $lease.ProcessId -eq $PID) 'consumer lease binds PID and creation time'
     & (Join-Path $temp 'Use-RamdiskCacheLease.ps1') -Mode Release -Name fixture -ConsumerProcessId $PID|Out-Null
     Check ((Get-RamdiskLeaseState -Directory (Join-Path $temp 'logs\leases')).Active -eq 0) 'consumer releases only its named lease'
+    $child=Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 5') -WindowStyle Hidden -PassThru
+    try{
+        $childLease=& (Join-Path $temp 'Use-RamdiskCacheLease.ps1') -Mode Acquire -Name retry-fixture -ConsumerProcessId $child.Id -Seconds 60|ConvertFrom-Json
+        $retryPath=Join-Path $temp 'logs\leases\retry-fixture.json'
+        $ownerBefore=[IO.File]::ReadAllText($retryPath)
+        $blocked=$false
+        try{& (Join-Path $temp 'Use-RamdiskCacheLease.ps1') -Mode Acquire -Name retry-fixture -ConsumerProcessId $PID -Seconds 60|Out-Null}catch{$blocked=$true}
+        Check ($blocked -and -not $child.HasExited -and [IO.File]::ReadAllText($retryPath) -ceq $ownerBefore) 'live consumer keeps its future-TTL lease unchanged'
+        $child.WaitForExit()
+        $retried=& (Join-Path $temp 'Use-RamdiskCacheLease.ps1') -Mode Acquire -Name retry-fixture -ConsumerProcessId $PID -Seconds 60|ConvertFrom-Json
+        Check ($retried.ProcessId -eq $PID -and (Read-RamdiskJson -Path $retryPath).ProcessId -eq $PID) 'exited consumer permits same-name acquisition before TTL expires'
+        & (Join-Path $temp 'Use-RamdiskCacheLease.ps1') -Mode Release -Name retry-fixture -ConsumerProcessId $PID|Out-Null
+        Check (-not (Test-Path -LiteralPath $retryPath)) 'retried consumer releases its replacement lease'
+    }finally{$child.WaitForExit();$child.Dispose()}
     [IO.File]::WriteAllText((Join-Path $temp 'logs\leases\bad.json'),'broken')
     Check ((Get-RamdiskLeaseState -Directory (Join-Path $temp 'logs\leases')).Unknown -eq 1) 'corrupt lease is unknown, not expired'
     # Extract the real normal copy branch; fault injection proves its errors escape to the worker handler.
